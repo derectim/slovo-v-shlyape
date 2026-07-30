@@ -39,31 +39,37 @@
       </div>
     </section>
 
-    <!-- 2. SETUP SCREEN (ENTER ALL PLAYERS FIRST) -->
+    <!-- 2. SETUP SCREEN -->
     <section id="screen-setup" class="screen">
       <header class="screen-header">
         <button class="btn-back" id="btn-setup-back">← Назад</button>
-        <h2>Участники игры</h2>
+        <h2>Настройка партии</h2>
       </header>
 
       <div class="screen-content">
         <div class="section-card">
           <div class="section-header">
-            <h3>Имена участников</h3>
-            <p class="section-desc">Введение все имена. Игра автоматически распределит вас по парам (по 2 человека в команде).</p>
+            <h3>Команды и игроки</h3>
+            <p class="section-desc">В каждой команде строго по 2 игрока.</p>
           </div>
 
-          <div id="players-input-list" class="players-input-list">
-            <!-- Dynamic player name inputs -->
+          <div class="auto-balance-actions">
+            <button id="btn-shuffle-players" class="btn btn-secondary btn-sm">
+              <span>🎲</span> Перемешать по парам
+            </button>
+          </div>
+          
+          <div id="teams-container" class="teams-list">
+            <!-- Teams dynamically rendered here -->
           </div>
 
-          <button id="btn-add-player-field" class="btn btn-outline btn-full">
-            <span>+</span> Добавить участника
+          <button id="btn-add-team" class="btn btn-outline btn-full">
+            <span>+</span> Добавить команду
           </button>
         </div>
 
         <div class="section-card">
-          <h3>Параметры партии</h3>
+          <h3>Параметры игры</h3>
           
           <div class="setting-row">
             <div class="setting-info">
@@ -92,27 +98,10 @@
       </div>
 
       <footer class="screen-footer">
-        <button id="btn-generate-teams" class="btn btn-primary btn-large btn-full glow-effect">
-          🎲 Распределить по командам ➔
-        </button>
-      </footer>
-    </section>
-
-    <!-- 2.5 TEAMS PREVIEW SCREEN -->
-    <section id="screen-teams-preview" class="screen">
-      <div class="screen-content center-content">
-        <div class="dice-icon">🎲</div>
-        <h2>Команды сформированы!</h2>
-        <p class="hero-subtitle">Игроки случайно распределены по парам:</p>
-
-        <div id="generated-teams-list" class="generated-teams-list">
-          <!-- Rendered pair teams -->
-        </div>
-
-        <button id="btn-confirm-teams" class="btn btn-primary btn-large btn-full glow-effect">
+        <button id="btn-proceed-words" class="btn btn-primary btn-large btn-full glow-effect">
           Перейти к вводу слов ➔
         </button>
-      </div>
+      </footer>
     </section>
 
     <!-- 3. WORD ENTRY SCREEN -->
@@ -284,7 +273,7 @@
           <div class="rule-num">1</div>
           <div class="rule-text">
             <strong>Формирование команд</strong>
-            <p>Укажите список игроков. Игра случайно сформирует из вас пары (по 2 человека в команде).</p>
+            <p>В каждой команде играет ровно 2 человека.</p>
           </div>
         </div>
         <div class="rule-item">
@@ -298,14 +287,14 @@
           <div class="rule-num">3</div>
           <div class="rule-text">
             <strong>Раунд 2: Пантомима</strong>
-            <p>Показывайте те же 30 слов жестами и мимикой без звуков.</p>
+            <p>Показывайте те же слова жестами и мимикой без звуков.</p>
           </div>
         </div>
         <div class="rule-item">
           <div class="rule-num">4</div>
           <div class="rule-text">
             <strong>Раунд 3: Одно слово</strong>
-            <p>Те же 30 слов! Но теперь разрешено сказать ровно одно слово-подсказку.</p>
+            <p>Те же слова! Но теперь разрешено сказать ровно одно слово-подсказку.</p>
           </div>
         </div>
       </div>
