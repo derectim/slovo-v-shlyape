@@ -12,7 +12,7 @@
   <meta http-equiv="Expires" content="0">
 
   <!-- Local VK Bridge bundle -->
-  <script src="vk-bridge.js?v=2.4.0"></script>
+  <script src="vk-bridge.js?v=2.4.1"></script>
   <script>
     (function initVK() {
       function sendVKInit() {
@@ -34,7 +34,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=2.4.0">
+  <link rel="stylesheet" href="styles.css?v=2.4.1">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -64,7 +64,7 @@
         </div>
 
         <div style="margin-top: 20px; font-size: 11px; opacity: 0.5; font-weight: 600;">
-          v2.4.0 (серверный мультиплеер)
+          v2.4.1 (надёжный онлайн)
         </div>
       </div>
     </section>
@@ -302,6 +302,9 @@
         <button id="btn-start-turn" class="btn btn-primary btn-large btn-full glow-effect">
           ⏱ Начать ход
         </button>
+        <p id="intro-waiting-message" class="turn-waiting-message is-hidden">
+          Ждём, когда объясняющий начнёт ход…
+        </p>
       </div>
     </section>
 
@@ -346,6 +349,12 @@
         </div>
       </div>
 
+      <div id="turn-observer-message" class="turn-observer-message is-hidden">
+        <div class="observer-icon">👀</div>
+        <strong>Ход уже идёт</strong>
+        <span>Следите за таймером. Карточка видна только объясняющему.</span>
+      </div>
+
       <footer class="turn-actions">
         <button id="btn-skip-card" class="btn btn-secondary btn-action-skip">
           <span>↪</span> Пропустить
@@ -371,6 +380,9 @@
         <button id="btn-next-round-step" class="btn btn-primary btn-large btn-full glow-effect">
           Следующий раунд ➔
         </button>
+        <p id="results-waiting-message" class="turn-waiting-message is-hidden">
+          Ждём ведущего…
+        </p>
       </div>
     </section>
 
@@ -435,6 +447,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.4.0"></script>
+  <script src="app.js?v=2.4.1"></script>
 </body>
 </html>

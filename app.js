@@ -16,11 +16,17 @@ if (window.vkBridge) {
 let roomSocket = null;
 let hostWordSubmissions = new Map();
 let hasSubmittedWords = false;
+let pendingWordSubmission = null;
+let submissionRetryTimer = null;
 let roomSyncInterval = null;
 let reconnectTimer = null;
 let connectionState = 'offline';
 let socketGeneration = 0;
 let hostCollisionAttempts = 0;
+let onlineTurnActive = false;
+let onlineTurnDeadline = 0;
+let onlineActionPending = false;
+let processedTurnActionIds = new Set();
 
 const MULTIPLAYER_SERVER_URL = window.__GAME_WS_URL__
   || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
@@ -166,10 +172,13 @@ function setConnectionStatus(state, message) {
 function destroyPeerNetwork() {
   clearInterval(roomSyncInterval);
   clearTimeout(reconnectTimer);
+  clearTimeout(submissionRetryTimer);
   roomSyncInterval = null;
   reconnectTimer = null;
+  submissionRetryTimer = null;
   socketGeneration += 1;
   hostWordSubmissions.clear();
+  pendingWordSubmission = null;
 
   if (roomSocket) {
     try { roomSocket.close(1000, 'Leaving room'); } catch (e) {}
@@ -241,7 +250,9 @@ function connectRoomSocket(code, isHost) {
       ? '● Комната доступна — можно приглашать игроков'
       : '● Подключено к комнате');
     sendSocketPayload({ type: 'request_sync' });
+    if (!isHost) sendSocketPayload({ type: 'request_turn_sync' });
     startRoomHeartbeat();
+    trySendPendingWordSubmission();
   });
 
   socket.addEventListener('message', event => {
@@ -271,6 +282,7 @@ function connectRoomSocket(code, isHost) {
 
 function handleRoomSocketMessage(data, code, isHost) {
   if (!data || typeof data !== 'object') return;
+  if (data.targetPlayerId && data.targetPlayerId !== gameState.myPlayerId) return;
   if (data.type === 'room_error') {
     if (data.error === 'room_exists' && isHost && hostCollisionAttempts < 8) {
       hostCollisionAttempts += 1;
@@ -293,6 +305,12 @@ function handleRoomSocketMessage(data, code, isHost) {
     renderOnlineLobby();
   } else if (isHost && data.type === 'submit_words') {
     handleOnlineWordSubmission(data);
+  } else if (!isHost && data.type === 'words_accepted' && data.playerId === gameState.myPlayerId) {
+    pendingWordSubmission = null;
+    clearTimeout(submissionRetryTimer);
+    submissionRetryTimer = null;
+    hasSubmittedWords = true;
+    showOnlineWordProgress(data.submitted || 0, data.total || gameState.onlinePlayers.length);
   } else if (!isHost && data.type === 'start_game') {
     gameState.teams = data.teams;
     gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
@@ -302,6 +320,44 @@ function handleRoomSocketMessage(data, code, isHost) {
     if (hasSubmittedWords) showOnlineWordProgress(data.submitted || 0, data.total || 0);
   } else if (!isHost && data.type === 'game_ready') {
     beginOnlineGame(data);
+  } else if (isHost && data.type === 'turn_action') {
+    handleOnlineTurnAction(data);
+  } else if (isHost && data.type === 'request_turn_sync' && onlineTurnActive) {
+    broadcastToPeers({
+      type: 'turn_state',
+      targetPlayerId: data.senderId,
+      state: createOnlineGameSnapshot(),
+      deadline: onlineTurnDeadline
+    });
+  } else if (!isHost && data.type === 'turn_started') {
+    applyOnlineGameSnapshot(data.state);
+    onlineTurnActive = true;
+    onlineTurnDeadline = Number(data.deadline) || (Date.now() + gameState.turnSeconds * 1000);
+    onlineActionPending = false;
+    renderSynchronizedTurn();
+  } else if (!isHost && data.type === 'turn_state') {
+    applyOnlineGameSnapshot(data.state);
+    onlineTurnActive = true;
+    onlineTurnDeadline = Number(data.deadline) || onlineTurnDeadline;
+    onlineActionPending = false;
+    renderSynchronizedTurn();
+  } else if (!isHost && data.type === 'turn_finished') {
+    applyOnlineGameSnapshot(data.state);
+    onlineTurnActive = false;
+    clearInterval(gameState.timerInterval);
+    if (data.roundCompleted) showRoundResults();
+    else {
+      renderRoundIntro();
+      showScreen('screen-round-intro');
+    }
+  } else if (!isHost && data.type === 'round_started') {
+    applyOnlineGameSnapshot(data.state);
+    onlineTurnActive = false;
+    renderRoundIntro();
+    showScreen('screen-round-intro');
+  } else if (!isHost && data.type === 'game_finished') {
+    applyOnlineGameSnapshot(data.state);
+    showFinalResults();
   }
 }
 
@@ -340,23 +396,30 @@ function broadcastToPeers(payloadObj) {
 }
 
 function handleOnlineWordSubmission(data) {
-  if (!gameState.isHost || !data || !data.playerId || !Array.isArray(data.words)) return;
+  if (!gameState.isHost || !data || !data.playerId || !Array.isArray(data.words)) return false;
   const playerExists = gameState.onlinePlayers.some(player => player.id === data.playerId);
   const words = data.words
     .map(word => typeof word === 'string' ? word.trim() : '')
     .filter(Boolean)
     .slice(0, gameState.wordsPerPlayer);
 
-  if (!playerExists || words.length !== gameState.wordsPerPlayer) return;
+  if (!playerExists || words.length !== gameState.wordsPerPlayer) return false;
 
   hostWordSubmissions.set(data.playerId, words);
   const submitted = hostWordSubmissions.size;
   const total = gameState.onlinePlayers.length;
   const progressPayload = { type: 'word_progress', submitted, total };
   broadcastToPeers(progressPayload);
+  broadcastToPeers({
+    type: 'words_accepted',
+    playerId: data.playerId,
+    submissionId: data.submissionId || null,
+    submitted,
+    total
+  });
   if (hasSubmittedWords) showOnlineWordProgress(submitted, total);
 
-  if (submitted < total) return;
+  if (submitted < total) return true;
 
   gameState.allCards = [];
   hostWordSubmissions.forEach((playerWords, playerId) => {
@@ -377,6 +440,30 @@ function handleOnlineWordSubmission(data) {
   };
   broadcastToPeers(readyPayload);
   beginOnlineGame(readyPayload);
+  return true;
+}
+
+function showOnlineWordSending() {
+  const privacyShield = document.getElementById('privacy-shield');
+  const wordsForm = document.getElementById('words-form-container');
+  const revealButton = document.getElementById('btn-reveal-entry');
+  const title = document.getElementById('privacy-player-name');
+  const description = document.getElementById('privacy-description');
+
+  if (privacyShield) privacyShield.classList.remove('hidden');
+  if (wordsForm) wordsForm.classList.add('hidden');
+  if (revealButton) revealButton.classList.add('hidden');
+  if (title) title.textContent = 'Отправляем слова…';
+  if (description) description.textContent = 'Ждём подтверждения сервера. При нестабильной связи отправка повторится автоматически.';
+}
+
+function trySendPendingWordSubmission() {
+  clearTimeout(submissionRetryTimer);
+  submissionRetryTimer = null;
+  if (!pendingWordSubmission || gameState.playMode !== 'online' || gameState.isHost) return;
+
+  sendSocketPayload(pendingWordSubmission);
+  submissionRetryTimer = setTimeout(trySendPendingWordSubmission, 2200);
 }
 
 function showOnlineWordProgress(submitted, total) {
@@ -401,8 +488,46 @@ function beginOnlineGame(data) {
   gameState.deck = data.deck;
   gameState.currentRoundIndex = 0;
   gameState.activeTeamIndex = 0;
+  onlineTurnActive = false;
+  onlineTurnDeadline = 0;
+  onlineActionPending = false;
+  processedTurnActionIds.clear();
   renderRoundIntro();
   showScreen('screen-round-intro');
+}
+
+function getCurrentExplainerId() {
+  const team = gameState.teams[gameState.activeTeamIndex];
+  if (!team || !Array.isArray(team.playerIds) || team.playerIds.length === 0) return null;
+  const index = team.explainerCursor % team.playerIds.length;
+  return team.playerIds[index] || null;
+}
+
+function isCurrentTurnController() {
+  return gameState.playMode !== 'online' || getCurrentExplainerId() === gameState.myPlayerId;
+}
+
+function createOnlineGameSnapshot() {
+  return {
+    teams: gameState.teams,
+    allCards: gameState.allCards,
+    deck: gameState.deck,
+    currentCard: gameState.currentCard,
+    currentRoundIndex: gameState.currentRoundIndex,
+    activeTeamIndex: gameState.activeTeamIndex,
+    turnGuessedCount: gameState.turnGuessedCount
+  };
+}
+
+function applyOnlineGameSnapshot(state) {
+  if (!state || typeof state !== 'object') return;
+  if (Array.isArray(state.teams)) gameState.teams = state.teams;
+  if (Array.isArray(state.allCards)) gameState.allCards = state.allCards;
+  if (Array.isArray(state.deck)) gameState.deck = state.deck;
+  gameState.currentCard = state.currentCard || null;
+  gameState.currentRoundIndex = Number.isInteger(state.currentRoundIndex) ? state.currentRoundIndex : gameState.currentRoundIndex;
+  gameState.activeTeamIndex = Number.isInteger(state.activeTeamIndex) ? state.activeTeamIndex : gameState.activeTeamIndex;
+  gameState.turnGuessedCount = Number.isInteger(state.turnGuessedCount) ? state.turnGuessedCount : 0;
 }
 
 function shuffleCards(cards) {
@@ -691,6 +816,11 @@ function startWordEntry() {
   }
   gameState.allCards = [];
   hasSubmittedWords = false;
+  pendingWordSubmission = null;
+  clearTimeout(submissionRetryTimer);
+  submissionRetryTimer = null;
+  onlineTurnActive = false;
+  onlineActionPending = false;
   const revealButton = document.getElementById('btn-reveal-entry');
   const description = document.getElementById('privacy-description');
   if (revealButton) revealButton.classList.remove('hidden');
@@ -745,6 +875,9 @@ function revealWordEntryForm() {
 }
 
 function submitCurrentPlayerWords() {
+  if (document.activeElement && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
   const inputs = document.querySelectorAll('.word-entry-input');
   const words = [];
   
@@ -763,12 +896,19 @@ function submitCurrentPlayerWords() {
       type: 'submit_words',
       playerId: gameState.myPlayerId,
       name: getMyName(),
+      submissionId: `${gameState.myPlayerId}_${Date.now()}`,
       words
     };
-    hasSubmittedWords = true;
-    if (gameState.isHost) handleOnlineWordSubmission(submission);
-    else broadcastRoomPayload(submission);
-    showOnlineWordProgress(gameState.isHost ? hostWordSubmissions.size : 1, gameState.onlinePlayers.length);
+    if (gameState.isHost) {
+      hasSubmittedWords = true;
+      handleOnlineWordSubmission(submission);
+      showOnlineWordProgress(hostWordSubmissions.size, gameState.onlinePlayers.length);
+    } else {
+      hasSubmittedWords = false;
+      pendingWordSubmission = submission;
+      showOnlineWordSending();
+      trySendPendingWordSubmission();
+    }
     return;
   }
 
@@ -800,6 +940,11 @@ function startRound(roundIndex) {
 
   renderRoundIntro();
   showScreen('screen-round-intro');
+
+  if (gameState.playMode === 'online' && gameState.isHost) {
+    processedTurnActionIds.clear();
+    broadcastToPeers({ type: 'round_started', state: createOnlineGameSnapshot() });
+  }
 }
 
 function renderRoundIntro() {
@@ -832,6 +977,16 @@ function renderRoundIntro() {
       </div>
     `;
   }).join('');
+
+  const startButton = document.getElementById('btn-start-turn');
+  const waitingMessage = document.getElementById('intro-waiting-message');
+  const canStart = isCurrentTurnController();
+  if (startButton) {
+    startButton.classList.toggle('is-hidden', !canStart);
+    startButton.disabled = false;
+    startButton.textContent = '⏱ Начать ход';
+  }
+  if (waitingMessage) waitingMessage.classList.toggle('is-hidden', canStart);
 }
 
 // --------------------------------------------------------------------------
@@ -839,11 +994,51 @@ function renderRoundIntro() {
 // --------------------------------------------------------------------------
 
 function startTurn() {
+  if (gameState.playMode === 'online') {
+    if (!isCurrentTurnController() || onlineTurnActive) return;
+    const button = document.getElementById('btn-start-turn');
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Подключаем ход…';
+    }
+    if (gameState.isHost) startOnlineTurnAuthoritative();
+    else sendOnlineTurnAction('start');
+    return;
+  }
+
+  prepareTurnState();
+  renderTurnScreen(true);
+  startTimer();
+}
+
+function prepareTurnState() {
   gameState.turnGuessedCount = 0;
   gameState.secondsLeft = gameState.turnSeconds;
   drawNextCard();
+}
 
+function startOnlineTurnAuthoritative() {
+  if (!gameState.isHost || onlineTurnActive) return;
+  prepareTurnState();
+  onlineTurnActive = true;
+  onlineTurnDeadline = Date.now() + gameState.turnSeconds * 1000;
+  broadcastToPeers({
+    type: 'turn_started',
+    state: createOnlineGameSnapshot(),
+    deadline: onlineTurnDeadline
+  });
+  renderSynchronizedTurn();
+}
+
+function renderSynchronizedTurn() {
+  renderTurnScreen(isCurrentTurnController());
+  startTimer();
+}
+
+function renderTurnScreen(canControl) {
   const activeTeam = gameState.teams[gameState.activeTeamIndex];
+  if (!activeTeam) return;
+
   const explainerIdx = activeTeam.explainerCursor % activeTeam.playerNames.length;
   const guesserIdx = (activeTeam.explainerCursor + 1) % activeTeam.playerNames.length;
 
@@ -854,8 +1049,18 @@ function startTurn() {
   document.getElementById('turn-roles-summary').textContent = `🗣 ${explainerName} ➔ 👂 ${guesserName}`;
   updateTurnUI();
 
+  const arena = document.querySelector('#screen-turn .card-arena');
+  const actions = document.querySelector('#screen-turn .turn-actions');
+  const observer = document.getElementById('turn-observer-message');
+  if (arena) arena.classList.toggle('is-hidden', !canControl);
+  if (actions) actions.classList.toggle('is-hidden', !canControl);
+  if (observer) observer.classList.toggle('is-hidden', canControl);
+  const guessButton = document.getElementById('btn-guess-card');
+  const skipButton = document.getElementById('btn-skip-card');
+  if (guessButton) guessButton.disabled = onlineActionPending;
+  if (skipButton) skipButton.disabled = onlineActionPending;
+
   showScreen('screen-turn');
-  startTimer();
 }
 
 function drawNextCard() {
@@ -867,7 +1072,10 @@ function drawNextCard() {
 }
 
 function updateTurnUI() {
-  const cardVal = gameState.currentCard ? gameState.currentCard.word : 'Все слова угаданы!';
+  const maySeeCard = gameState.playMode !== 'online' || isCurrentTurnController();
+  const cardVal = maySeeCard
+    ? (gameState.currentCard ? gameState.currentCard.word : 'Все слова угаданы!')
+    : 'Карточка скрыта';
   document.getElementById('card-word-value').textContent = cardVal;
   
   const currentLeft = gameState.deck.length + (gameState.currentCard ? 1 : 0);
@@ -878,6 +1086,17 @@ function updateTurnUI() {
 }
 
 function handleCardGuess() {
+  if (gameState.playMode === 'online') {
+    if (!onlineTurnActive || !isCurrentTurnController()) return;
+    if (gameState.isHost) applyOnlineCardGuess();
+    else sendOnlineTurnAction('guess');
+    return;
+  }
+
+  applyCardGuessMutation();
+}
+
+function applyCardGuessMutation() {
   if (!gameState.currentCard) return;
 
   gameState.teams[gameState.activeTeamIndex].roundScores[gameState.currentRoundIndex] += 1;
@@ -893,7 +1112,32 @@ function handleCardGuess() {
   }
 }
 
+function applyOnlineCardGuess() {
+  if (!gameState.isHost || !onlineTurnActive || !gameState.currentCard) return;
+  gameState.teams[gameState.activeTeamIndex].roundScores[gameState.currentRoundIndex] += 1;
+  gameState.turnGuessedCount += 1;
+  gameState.currentCard = null;
+
+  if (gameState.deck.length === 0) {
+    finishTurn(true);
+    return;
+  }
+  drawNextCard();
+  broadcastOnlineTurnState();
+}
+
 function handleCardSkip() {
+  if (gameState.playMode === 'online') {
+    if (!onlineTurnActive || !isCurrentTurnController()) return;
+    if (gameState.isHost) applyOnlineCardSkip();
+    else sendOnlineTurnAction('skip');
+    return;
+  }
+
+  applyCardSkipMutation();
+}
+
+function applyCardSkipMutation() {
   if (!gameState.currentCard) return;
 
   const skippedCard = gameState.currentCard;
@@ -910,8 +1154,62 @@ function handleCardSkip() {
   updateTurnUI();
 }
 
+function applyOnlineCardSkip() {
+  if (!gameState.isHost || !onlineTurnActive || !gameState.currentCard) return;
+  const skippedCard = gameState.currentCard;
+  gameState.currentCard = null;
+  if (gameState.deck.length === 0) gameState.deck.push(skippedCard);
+  else gameState.deck.splice(Math.floor(Math.random() * (gameState.deck.length + 1)), 0, skippedCard);
+  drawNextCard();
+  broadcastOnlineTurnState();
+}
+
+function sendOnlineTurnAction(action) {
+  if (onlineActionPending) return;
+  const sent = sendSocketPayload({
+    type: 'turn_action',
+    action,
+    actionId: `${gameState.myPlayerId}_${action}_${Date.now()}`
+  });
+  if (sent) {
+    onlineActionPending = true;
+    if (action !== 'start') renderTurnScreen(true);
+  }
+  if (!sent) {
+    setConnectionStatus('connecting', '● Восстанавливаем связь…');
+    const button = document.getElementById('btn-start-turn');
+    if (button) {
+      button.disabled = false;
+      button.textContent = '⏱ Начать ход';
+    }
+  }
+}
+
+function handleOnlineTurnAction(data) {
+  if (!gameState.isHost || !data || data.senderId !== getCurrentExplainerId()) return;
+  if (data.actionId && processedTurnActionIds.has(data.actionId)) return;
+  if (data.actionId) {
+    processedTurnActionIds.add(data.actionId);
+    if (processedTurnActionIds.size > 200) processedTurnActionIds.clear();
+  }
+  if (data.action === 'start' && !onlineTurnActive) startOnlineTurnAuthoritative();
+  else if (data.action === 'guess' && onlineTurnActive) applyOnlineCardGuess();
+  else if (data.action === 'skip' && onlineTurnActive) applyOnlineCardSkip();
+}
+
+function broadcastOnlineTurnState() {
+  broadcastToPeers({
+    type: 'turn_state',
+    state: createOnlineGameSnapshot(),
+    deadline: onlineTurnDeadline
+  });
+  renderSynchronizedTurn();
+}
+
 function finishTurn(roundCompleted = false) {
+  if (gameState.playMode === 'online' && !gameState.isHost) return;
   clearInterval(gameState.timerInterval);
+  onlineTurnActive = false;
 
   if (gameState.currentCard) {
     gameState.deck.push(gameState.currentCard);
@@ -923,6 +1221,14 @@ function finishTurn(roundCompleted = false) {
   activeTeam.explainerCursor += 1;
 
   gameState.activeTeamIndex = (gameState.activeTeamIndex + 1) % gameState.teams.length;
+
+  if (gameState.playMode === 'online') {
+    broadcastToPeers({
+      type: 'turn_finished',
+      state: createOnlineGameSnapshot(),
+      roundCompleted
+    });
+  }
 
   if (roundCompleted) {
     showRoundResults();
@@ -941,8 +1247,12 @@ function startTimer() {
 
   if (timerWidget) timerWidget.classList.remove('warning', 'danger');
 
-  gameState.timerInterval = setInterval(() => {
-    gameState.secondsLeft -= 1;
+  const renderTimer = () => {
+    if (gameState.playMode === 'online') {
+      gameState.secondsLeft = Math.max(0, Math.ceil((onlineTurnDeadline - Date.now()) / 1000));
+    } else {
+      gameState.secondsLeft -= 1;
+    }
     if (timerText) timerText.textContent = gameState.secondsLeft;
 
     const progressRatio = gameState.secondsLeft / gameState.turnSeconds;
@@ -960,9 +1270,17 @@ function startTimer() {
 
     if (gameState.secondsLeft <= 0) {
       clearInterval(gameState.timerInterval);
-      finishTurn(false);
+      if (gameState.playMode !== 'online' || gameState.isHost) finishTurn(false);
     }
-  }, 1000);
+  };
+
+  if (gameState.playMode === 'online') {
+    gameState.secondsLeft = Math.max(0, Math.ceil((onlineTurnDeadline - Date.now()) / 1000));
+    if (timerText) timerText.textContent = gameState.secondsLeft;
+    gameState.timerInterval = setInterval(renderTimer, 250);
+  } else {
+    gameState.timerInterval = setInterval(renderTimer, 1000);
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -1078,8 +1396,12 @@ function showRoundResults() {
   `).join('');
 
   const nextBtn = document.getElementById('btn-next-round-step');
+  const waitingMessage = document.getElementById('results-waiting-message');
   const isFinal = rIdx === ROUNDS.length - 1;
   nextBtn.textContent = isFinal ? '🏆 Объявить победителей' : 'Следующий раунд ➔';
+  const canAdvance = gameState.playMode !== 'online' || gameState.isHost;
+  nextBtn.classList.toggle('is-hidden', !canAdvance);
+  if (waitingMessage) waitingMessage.classList.toggle('is-hidden', canAdvance);
 
   showScreen('screen-round-results');
 }
@@ -1362,9 +1684,13 @@ function initApp() {
   const btnNextRound = document.getElementById('btn-next-round-step');
   if (btnNextRound) {
     btnNextRound.addEventListener('click', () => {
+      if (gameState.playMode === 'online' && !gameState.isHost) return;
       if (gameState.currentRoundIndex < ROUNDS.length - 1) {
         startRound(gameState.currentRoundIndex + 1);
       } else {
+        if (gameState.playMode === 'online' && gameState.isHost) {
+          broadcastToPeers({ type: 'game_finished', state: createOnlineGameSnapshot() });
+        }
         showFinalResults();
       }
     });

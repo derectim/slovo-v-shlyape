@@ -50,6 +50,17 @@ const submission = await submissionPromise;
 assert.equal(submission.playerId, 'guest-1');
 assert.equal(submission.senderId, 'guest-1');
 
+const acceptedPromise = nextMessage(guest, message => message.type === 'words_accepted');
+host.send(JSON.stringify({ type: 'words_accepted', playerId: 'guest-1', submitted: 2, total: 2 }));
+const accepted = await acceptedPromise;
+assert.equal(accepted.playerId, 'guest-1');
+
+const actionPromise = nextMessage(host, message => message.type === 'turn_action');
+guest.send(JSON.stringify({ type: 'turn_action', action: 'start', actionId: 'action-1' }));
+const action = await actionPromise;
+assert.equal(action.senderId, 'guest-1');
+assert.equal(action.action, 'start');
+
 const startPromise = nextMessage(guest, message => message.type === 'start_game');
 host.send(JSON.stringify({ type: 'start_game', teams: [{ name: 'Команда' }] }));
 const start = await startPromise;

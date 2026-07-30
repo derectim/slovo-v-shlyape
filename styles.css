@@ -27,6 +27,10 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.is-hidden {
+  display: none !important;
+}
+
 html, body {
   width: 100%;
   height: 100%;
@@ -538,6 +542,39 @@ body {
 
 .words-form.hidden, .modal-overlay.hidden, .section-card.hidden {
   display: none !important;
+}
+
+.turn-waiting-message {
+  color: var(--text-muted);
+  font-size: 15px;
+  font-weight: 700;
+  padding: 16px;
+}
+
+.turn-observer-message {
+  flex: 1;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.turn-observer-message strong {
+  color: var(--text-main);
+  font-size: 22px;
+}
+
+.turn-observer-message span {
+  max-width: 300px;
+  line-height: 1.5;
+}
+
+.observer-icon {
+  font-size: 48px;
 }
 
 .player-turn-badge {

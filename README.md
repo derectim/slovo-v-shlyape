@@ -60,7 +60,7 @@ flutter run
 
 ## Сервер онлайн-комнат
 
-Версия 2.4.0 использует обычный защищённый WebSocket вместо прямых WebRTC-соединений. Комнаты обслуживает Cloudflare Worker с Durable Object, поэтому один и тот же список игроков доступен в VK Mini Apps, Telegram Mini Apps и обычном браузере.
+Версия 2.4.1 использует обычный защищённый WebSocket вместо прямых WebRTC-соединений. Комнаты обслуживает Cloudflare Worker с Durable Object, поэтому один и тот же список игроков доступен в VK Mini Apps, Telegram Mini Apps и обычном браузере.
 
 ```powershell
 npm.cmd install
