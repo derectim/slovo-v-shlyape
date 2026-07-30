@@ -338,7 +338,12 @@ function startRound(roundIndex) {
 function renderRoundIntro() {
   const round = ROUNDS[gameState.currentRoundIndex];
   const activeTeam = gameState.teams[gameState.activeTeamIndex];
-  const explainerName = activeTeam.playerNames[activeTeam.explainerCursor % activeTeam.playerNames.length];
+  
+  const explainerIdx = activeTeam.explainerCursor % activeTeam.playerNames.length;
+  const guesserIdx = (activeTeam.explainerCursor + 1) % activeTeam.playerNames.length;
+
+  const explainerName = activeTeam.playerNames[explainerIdx];
+  const guesserName = activeTeam.playerNames[guesserIdx];
 
   document.getElementById('round-badge').textContent = `РАУНД ${gameState.currentRoundIndex + 1} ИЗ 3`;
   document.getElementById('round-title').textContent = round.title;
@@ -347,7 +352,8 @@ function renderRoundIntro() {
   document.getElementById('intro-total-words-badge').textContent = `🎩 В шляпе: ${gameState.allCards.length} слов`;
 
   document.getElementById('intro-team-name').textContent = activeTeam.name;
-  document.getElementById('intro-explainer-name').textContent = `Объясняет: ${explainerName}`;
+  document.getElementById('intro-explainer-name').textContent = `🗣 Объясняет: ${explainerName}`;
+  document.getElementById('intro-guesser-name').textContent = `👂 Угадывает: ${guesserName}`;
 
   // Mini Scoreboard
   const scoreList = document.getElementById('intro-scoreboard-list');
@@ -372,7 +378,14 @@ function startTurn() {
   drawNextCard();
 
   const activeTeam = gameState.teams[gameState.activeTeamIndex];
+  const explainerIdx = activeTeam.explainerCursor % activeTeam.playerNames.length;
+  const guesserIdx = (activeTeam.explainerCursor + 1) % activeTeam.playerNames.length;
+
+  const explainerName = activeTeam.playerNames[explainerIdx];
+  const guesserName = activeTeam.playerNames[guesserIdx];
+
   document.getElementById('turn-active-team').textContent = activeTeam.name;
+  document.getElementById('turn-roles-summary').textContent = `🗣 ${explainerName} ➔ 👂 ${guesserName}`;
   updateTurnUI();
 
   showScreen('screen-turn');
@@ -444,11 +457,11 @@ function finishTurn(roundCompleted = false) {
     gameState.deck.sort(() => Math.random() - 0.5);
   }
 
-  // Next explainer in team
+  // При КАЖДОМ завершении хода напарники в команде автоматически меняются ролями!
   const activeTeam = gameState.teams[gameState.activeTeamIndex];
   activeTeam.explainerCursor += 1;
 
-  // Next team turn in cyclic queue
+  // Следующая команда по кругу
   gameState.activeTeamIndex = (gameState.activeTeamIndex + 1) % gameState.teams.length;
 
   if (roundCompleted) {

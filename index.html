@@ -12,7 +12,7 @@
   <meta http-equiv="Expires" content="0">
 
   <!-- Local VK Bridge Bundle for 100% Reliable Execution -->
-  <script src="vk-bridge.js?v=2.0.8"></script>
+  <script src="vk-bridge.js?v=2.0.9"></script>
   <script>
     (function initVK() {
       function sendVKInit() {
@@ -21,9 +21,7 @@
           if (bridge && typeof bridge.send === 'function') {
             bridge.send('VKWebAppInit', {});
           }
-        } catch (e) {
-          console.log('VK Init err:', e);
-        }
+        } catch (e) {}
       }
       sendVKInit();
       window.addEventListener('DOMContentLoaded', sendVKInit);
@@ -36,7 +34,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=2.0.8">
+  <link rel="stylesheet" href="styles.css?v=2.0.9">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -205,7 +203,10 @@
           <div id="intro-total-words-badge" class="total-words-badge">🎩 В шляпе: 0 слов</div>
           <span class="active-label">Сейчас ходит</span>
           <h3 id="intro-team-name" class="active-team">Команда 1</h3>
-          <p id="intro-explainer-name" class="active-player">Объясняет: Игрок 1</p>
+          <div class="roles-badge">
+            <span id="intro-explainer-name" class="role-item">🗣 Объясняет: Игрок 1</span>
+            <span id="intro-guesser-name" class="role-item">👂 Угадывает: Игрок 2</span>
+          </div>
         </div>
 
         <div class="mini-scoreboard">
@@ -233,6 +234,7 @@
 
         <div class="turn-meta">
           <span id="turn-active-team" class="turn-team-name">Команда</span>
+          <span id="turn-roles-summary" class="turn-roles-text">🗣 Игрок 1 ➔ 👂 Игрок 2</span>
           <span id="turn-cards-left" class="cards-left-badge">В шляпе: 0 из 0</span>
         </div>
       </div>
@@ -319,8 +321,8 @@
         <div class="rule-item">
           <div class="rule-num">1</div>
           <div class="rule-text">
-            <strong>Формирование команд</strong>
-            <p>В каждой команде играет ровно 2 человека. Вы можете сформировать пары случайно или вручную.</p>
+            <strong>Смена ролей в паре</strong>
+            <p>Каждый следующий ход команды напарники меняются ролями: кто был объясняющим — становится угадывающим!</p>
           </div>
         </div>
         <div class="rule-item">
@@ -348,6 +350,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.8"></script>
+  <script src="app.js?v=2.0.9"></script>
 </body>
 </html>
