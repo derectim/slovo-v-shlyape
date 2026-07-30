@@ -1,6 +1,6 @@
 /**
  * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
- * Встроенный PubNub Realtime Network Engine для гарантированного вещания комнат.
+ * Встроенный Supabase Realtime Presence & Broadcast Engine.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -12,10 +12,20 @@ if (window.vkBridge) {
   }
 }
 
-// Сетевые переменные PubNub Realtime Network
-let pubnub = null;
-let pubnubChannel = null;
-let roomSyncInterval = null;
+// Переменные Supabase Realtime
+let supabaseClient = null;
+let roomChannel = null;
+
+if (window.supabase && typeof window.supabase.createClient === 'function') {
+  try {
+    supabaseClient = window.supabase.createClient(
+      'https://xkmtlwrudyspxwzwndrh.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhrbXRsd3J1ZHlzcHh3enduZHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE2ODg4NjM2NzAsImV4cCI6MjAwNDQzOTY3MH0.dExEBRGZ39e7K-4T_OqXpS-2QJ4c-f1g0p0M7HqG9k0'
+    );
+  } catch (e) {
+    console.error('Supabase init error:', e);
+  }
+}
 
 // Игровые Константы Раундов
 const ROUNDS = [
@@ -87,7 +97,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С PUBNUB REALTIME NETWORK
+// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С SUPABASE REALTIME PRESENCE
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -111,9 +121,9 @@ function createOnlineRoom() {
   gameState.onlineRoomCode = generateRoomCode();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true, lastActive: Date.now() }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
 
-  connectPubNubRoom(gameState.onlineRoomCode);
+  connectSupabaseRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
@@ -128,128 +138,79 @@ function joinOnlineRoom(code) {
   gameState.onlineRoomCode = code.toUpperCase();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false, lastActive: Date.now() }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false }];
 
-  connectPubNubRoom(gameState.onlineRoomCode);
+  connectSupabaseRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
 
-function connectPubNubRoom(code) {
-  if (pubnub) {
-    try { pubnub.unsubscribeAll(); } catch (e) {}
+function connectSupabaseRoom(code) {
+  if (!supabaseClient) {
+    console.error('Supabase Client not ready');
+    return;
   }
-  clearInterval(roomSyncInterval);
 
-  if (window.PubNub) {
-    // Высокоскоростные валидные ключи PubNub Realtime Network
-    pubnub = new PubNub({
-      publishKey: 'pub-c-7e3f8ec3-5969-42b7-a36c-941f5ee71587',
-      subscribeKey: 'sub-c-59f0f9b6-df41-4c12-87db-2b5d4fb1fa61',
-      uuid: gameState.myPlayerId
-    });
+  if (roomChannel) {
+    try { supabaseClient.removeChannel(roomChannel); } catch (e) {}
+  }
 
-    pubnubChannel = `shlyapa_room_${code}`;
+  roomChannel = supabaseClient.channel(`shlyapa_room_${code}`, {
+    config: {
+      presence: {
+        key: gameState.myPlayerId
+      },
+      broadcast: {
+        self: true,
+        ack: true
+      }
+    }
+  });
 
-    pubnub.addListener({
-      status: (statusEvent) => {
-        if (statusEvent.category === "PNConnectedCategory") {
-          broadcastPubNubMessage({
-            type: 'join',
-            id: gameState.myPlayerId,
-            name: getMyName(),
-            isHost: gameState.isHost
+  // 1. АВТО-ПРИСУТСТВИЕ: При любом входе/выходе Supabase формирует список активных участников!
+  roomChannel.on('presence', { event: 'sync' }, () => {
+    const state = roomChannel.presenceState();
+    const map = new Map();
+
+    Object.keys(state).forEach(key => {
+      state[key].forEach(user => {
+        if (user && user.id) {
+          map.set(user.id, {
+            id: user.id,
+            name: user.name || 'Игрок',
+            isHost: !!user.isHost
           });
         }
-      },
-      message: (event) => {
-        const msg = event.message;
-        if (msg) {
-          if (msg.type === 'join' || msg.type === 'heartbeat') {
-            handleIncomingPlayer(msg);
-          } else if (msg.type === 'sync_players') {
-            if (!gameState.isHost && msg.players) {
-              gameState.onlinePlayers = msg.players;
-              renderOnlineLobby();
-            }
-          } else if (msg.type === 'start_game') {
-            gameState.teams = msg.teams;
-            gameState.wordsPerPlayer = msg.wordsPerPlayer || 5;
-            gameState.turnSeconds = msg.turnSeconds || 60;
-            startWordEntry();
-          }
-        }
-      }
+      });
     });
 
-    pubnub.subscribe({
-      channels: [pubnubChannel]
-    });
+    const activeList = Array.from(map.values());
+    if (activeList.length > 0) {
+      gameState.onlinePlayers = activeList;
+      renderOnlineLobby();
+    }
+  });
 
-    // Регулярный пульс синхронизации
-    roomSyncInterval = setInterval(() => {
-      broadcastPubNubMessage({
-        type: 'heartbeat',
+  // 2. ВЕЩАНИЕ (BROADCAST): Старт партии у всех участников одновременно!
+  roomChannel.on('broadcast', { event: 'start_game' }, ({ payload }) => {
+    if (payload && payload.teams) {
+      gameState.teams = payload.teams;
+      gameState.wordsPerPlayer = payload.wordsPerPlayer || 5;
+      gameState.turnSeconds = payload.turnSeconds || 60;
+      startWordEntry();
+    }
+  });
+
+  // 3. ПОДПИСКА И ТРЕКИНГ МЕСТОПОЛОЖЕНИЯ
+  roomChannel.subscribe(async (status) => {
+    if (status === 'SUBSCRIBED') {
+      await roomChannel.track({
         id: gameState.myPlayerId,
         name: getMyName(),
         isHost: gameState.isHost
       });
-
-      if (gameState.isHost) {
-        const now = Date.now();
-        const activePlayers = gameState.onlinePlayers.filter(p => p.id === gameState.myPlayerId || (now - (p.lastActive || now)) < 8000);
-        if (activePlayers.length !== gameState.onlinePlayers.length) {
-          gameState.onlinePlayers = activePlayers;
-          renderOnlineLobby();
-        }
-        broadcastPubNubMessage({
-          type: 'sync_players',
-          players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
-        });
-      }
-    }, 1500);
-
-    // Сразу вещаем свой вход
-    broadcastPubNubMessage({
-      type: 'join',
-      id: gameState.myPlayerId,
-      name: getMyName(),
-      isHost: gameState.isHost
-    });
-  }
-}
-
-function broadcastPubNubMessage(payloadObj) {
-  if (pubnub && pubnubChannel) {
-    try {
-      pubnub.publish({
-        channel: pubnubChannel,
-        message: payloadObj
-      });
-    } catch (e) {}
-  }
-}
-
-function handleIncomingPlayer(msg) {
-  const now = Date.now();
-  const existing = gameState.onlinePlayers.find(p => p.id === msg.id);
-
-  if (!existing) {
-    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: msg.isHost, lastActive: now });
-  } else {
-    existing.name = msg.name;
-    existing.lastActive = now;
-    if (msg.isHost) existing.isHost = true;
-  }
-
-  renderOnlineLobby();
-
-  if (gameState.isHost) {
-    broadcastPubNubMessage({
-      type: 'sync_players',
-      players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
-    });
-  }
+    }
+  });
 }
 
 function renderOnlineLobby() {
@@ -358,7 +319,7 @@ function switchSetupMode(mode) {
     tabManual.classList.add('active');
     tabRandom.classList.remove('active');
     viewManual.classList.remove('hidden');
-    viewManual.classList.add('hidden');
+    viewRandom.classList.add('hidden');
     renderManualTeams();
   }
 }
@@ -430,12 +391,15 @@ function shuffleRawPairs() {
     });
   }
 
-  if (gameState.playMode === 'online' && gameState.isHost) {
-    broadcastPubNubMessage({
-      type: 'start_game',
-      teams: gameState.teams,
-      wordsPerPlayer: gameState.wordsPerPlayer,
-      turnSeconds: gameState.turnSeconds
+  if (gameState.playMode === 'online' && gameState.isHost && roomChannel) {
+    roomChannel.send({
+      type: 'broadcast',
+      event: 'start_game',
+      payload: {
+        teams: gameState.teams,
+        wordsPerPlayer: gameState.wordsPerPlayer,
+        turnSeconds: gameState.turnSeconds
+      }
     });
 
     startWordEntry();
@@ -1039,7 +1003,7 @@ function initApp() {
   if (btnForceRefresh) {
     btnForceRefresh.addEventListener('click', () => {
       if (gameState.onlineRoomCode) {
-        connectPubNubRoom(gameState.onlineRoomCode);
+        connectSupabaseRoom(gameState.onlineRoomCode);
       }
     });
   }
