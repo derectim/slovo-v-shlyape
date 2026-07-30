@@ -1,6 +1,6 @@
 /**
  * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
- * Использование сверхнадежного сетевого шлюза ntfy.sh (WebSocket + HTTP Sync Fallback).
+ * Гарантированная доставка сообщений через ntfy.sh с заголовком Cache: yes.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -61,7 +61,7 @@ let gameState = {
 // Сетевые переменные (ntfy.sh HTTP + WebSocket Relay)
 let wsClient = null;
 let roomSyncInterval = null;
-let lastProcessedMsgTime = 0;
+let processedMsgIds = new Set();
 
 // Список всех игроков одной плоскостью
 function getAllPlayers() {
@@ -87,7 +87,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С ГАРАНТИРОВАННЫМ HTTP/WSS RELAY (NTFY.SH)
+// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С КЭШИРУЕМЫМ WSS/HTTP RELAY (NTFY.SH)
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -140,26 +140,29 @@ function connectNtfyRoom(code) {
     try { wsClient.close(); } catch (e) {}
   }
   clearInterval(roomSyncInterval);
-  lastProcessedMsgTime = Math.floor(Date.now() / 1000) - 5;
+  processedMsgIds.clear();
 
   const topic = `slovo_room_${code}`;
 
-  // 1. Попытка WebSocket соединения
+  // 1. WebSocket для мгновенных сообщений
   try {
     wsClient = new WebSocket(`wss://ntfy.sh/${topic}/ws`);
     wsClient.onmessage = (event) => {
       try {
         const raw = JSON.parse(event.data);
-        if (raw.event === 'message' && raw.message) {
-          parseRoomPayload(raw.message);
+        if (raw.id && !processedMsgIds.has(raw.id)) {
+          processedMsgIds.add(raw.id);
+          if (raw.event === 'message' && raw.message) {
+            parseRoomPayload(raw.message);
+          }
         }
       } catch (e) {}
     };
   } catch (e) {}
 
-  // 2. Гарантированный HTTP Polling синхронизатор каждые 1.2 секунды
+  // 2. HTTP Sync Polling каждые 1.0 секунду для подстраховки
   roomSyncInterval = setInterval(() => {
-    // Отправляем сердечный ритм в комнату
+    // Отправляем сердечный ритм в комнату с кэшированием
     postRoomPayload({
       type: 'heartbeat',
       id: gameState.myPlayerId,
@@ -167,7 +170,7 @@ function connectNtfyRoom(code) {
       isHost: gameState.isHost
     });
 
-    // Опрашиваем сообщения в комнате
+    // Опрашиваем кэшированные сообщения в комнате за последнюю минуту
     fetchHistoryPayloads(topic);
 
     // Хост периодически очищает неактивных игроков и рассылает актуальный список
@@ -180,7 +183,7 @@ function connectNtfyRoom(code) {
       }
       broadcastPlayersList();
     }
-  }, 1200);
+  }, 1000);
 
   // Сразу анонсируем свой вход
   postRoomPayload({
@@ -197,6 +200,9 @@ function postRoomPayload(payloadObj) {
   try {
     fetch(`https://ntfy.sh/${topic}`, {
       method: 'POST',
+      headers: {
+        'Cache': 'yes' // Включает сервеное кэширование ntfy.sh для подтягивания списка опоздавшим!
+      },
       body: JSON.stringify(payloadObj)
     }).catch(() => {});
   } catch (e) {}
@@ -204,7 +210,7 @@ function postRoomPayload(payloadObj) {
 
 function fetchHistoryPayloads(topic) {
   try {
-    fetch(`https://ntfy.sh/${topic}/json?poll=1&since=${lastProcessedMsgTime}`)
+    fetch(`https://ntfy.sh/${topic}/json?poll=1&since=1m`)
       .then(res => res.text())
       .then(text => {
         const lines = text.trim().split('\n');
@@ -212,11 +218,11 @@ function fetchHistoryPayloads(topic) {
           if (!line) return;
           try {
             const raw = JSON.parse(line);
-            if (raw.time && raw.time > lastProcessedMsgTime) {
-              lastProcessedMsgTime = raw.time;
-            }
-            if (raw.event === 'message' && raw.message) {
-              parseRoomPayload(raw.message);
+            if (raw.id && !processedMsgIds.has(raw.id)) {
+              processedMsgIds.add(raw.id);
+              if (raw.event === 'message' && raw.message) {
+                parseRoomPayload(raw.message);
+              }
             }
           } catch (e) {}
         });
@@ -678,7 +684,7 @@ function startTurn() {
   const guesserName = activeTeam.playerNames[guesserIdx];
 
   document.getElementById('turn-active-team').textContent = activeTeam.name;
-  document.getElementById('turn-roles-summary').textContent = `🗣 ${explainerName} ➔ 👂 ${guesserName}`;
+  document.getElementById('turn-roles-summary').textContent = `🗣 ${explainerName} ➔ <ctrl42>👂 ${guesserName}`;
   updateTurnUI();
 
   showScreen('screen-turn');
