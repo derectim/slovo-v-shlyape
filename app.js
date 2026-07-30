@@ -1,5 +1,5 @@
 /**
- * «Слово в шляпе» — Локальный режим (1 устройство) + Онлайн-мультиплеер по коду комнаты с Supabase Realtime WebSockets.
+ * «Слово в шляпе» — Локальный режим + Онлайн-мультиплеер с Supabase Realtime Presence.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -11,7 +11,7 @@ if (window.vkBridge) {
   }
 }
 
-// Supabase Realtime WebSockets для мгновенной связи между устройствами (100% бесплатно и устойчиво в РФ/СНГ)
+// Supabase Realtime WebSockets (100% устойчив в РФ и СНГ)
 const SUPABASE_URL = 'https://xkmtlwrudyspxwzwndrh.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhrbXRsd3J1ZHlzcHh3enduZHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE2ODg4NjM2NzAsImV4cCI6MjAwNDQzOTY3MH0.dExEBRGZ39e7K-4T_OqXpS-2QJ4c-f1g0p0M7HqG9k0';
 
@@ -22,7 +22,7 @@ if (window.supabase) {
   try {
     supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   } catch (e) {
-    console.log('Supabase client error:', e);
+    console.log('Supabase init err:', e);
   }
 }
 
@@ -96,7 +96,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. ОНЛАЙН МУЛЬТИПЛЕЕР С WSS (REALTIME LOBBY & BROADCAST)
+// 0. ОНЛАЙН МУЛЬТИПЛЕЕР (SUPABASE REALTIME PRESENCE)
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -122,7 +122,7 @@ function createOnlineRoom() {
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
 
-  connectRoomWebSocket(gameState.onlineRoomCode);
+  connectRoomPresence(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
@@ -139,73 +139,63 @@ function joinOnlineRoom(code) {
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false }];
 
-  connectRoomWebSocket(gameState.onlineRoomCode);
+  connectRoomPresence(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
 
-function connectRoomWebSocket(roomCode) {
+function connectRoomPresence(roomCode) {
   if (!supabaseClient) return;
 
   if (roomChannel) {
     supabaseClient.removeChannel(roomChannel);
   }
 
-  // Открываем WSS канал комнаты
+  // Канал комнаты с отслеживанием присутствия (Presence)
   roomChannel = supabaseClient.channel(`room_${roomCode}`, {
-    config: { broadcast: { self: true } }
+    config: {
+      presence: { key: gameState.myPlayerId }
+    }
   });
 
+  // Отслеживаем изменения подключения всех участников в реальном времени
   roomChannel
-    .on('broadcast', { event: 'join_announce' }, ({ payload }) => {
-      handlePlayerAnnounce(payload);
-    })
-    .on('broadcast', { event: 'sync_players' }, ({ payload }) => {
-      if (!gameState.isHost && payload.players) {
-        gameState.onlinePlayers = payload.players;
+    .on('presence', { event: 'sync' }, () => {
+      const state = roomChannel.presenceState();
+      const playersList = [];
+
+      Object.keys(state).forEach(key => {
+        state[key].forEach(user => {
+          if (!playersList.some(p => p.id === user.id)) {
+            playersList.push(user);
+          }
+        });
+      });
+
+      if (playersList.length > 0) {
+        gameState.onlinePlayers = playersList;
         renderOnlineLobby();
       }
     })
     .on('broadcast', { event: 'start_game' }, ({ payload }) => {
-      if (payload.teams) {
+      if (payload && payload.teams) {
         gameState.teams = payload.teams;
         gameState.wordsPerPlayer = payload.wordsPerPlayer || 5;
         gameState.turnSeconds = payload.turnSeconds || 60;
+        
+        // Синхронно старуем ввод слов у всех игроков!
         startWordEntry();
       }
     })
-    .subscribe((status) => {
+    .subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
-        // Отправляем огласку о своем присутствии
-        roomChannel.send({
-          type: 'broadcast',
-          event: 'join_announce',
-          payload: { id: gameState.myPlayerId, name: gameState.myPlayerName, isHost: gameState.isHost }
+        await roomChannel.track({
+          id: gameState.myPlayerId,
+          name: getMyName(),
+          isHost: gameState.isHost
         });
       }
     });
-}
-
-function handlePlayerAnnounce(player) {
-  const exists = gameState.onlinePlayers.some(p => p.id === player.id);
-  if (!exists) {
-    gameState.onlinePlayers.push(player);
-  } else {
-    // Обновляем имя если сменилось
-    const p = gameState.onlinePlayers.find(p => p.id === player.id);
-    if (p) p.name = player.name;
-  }
-
-  renderOnlineLobby();
-
-  // Хост рассылает полный актуальный список игроков
-  if (gameState.isHost && roomChannel) {
-    roomChannel.send({
-      type: 'broadcast',
-      event: 'sync_players',
-      payload: { players: gameState.onlinePlayers }
-    });
-  }
 }
 
 function renderOnlineLobby() {
@@ -217,18 +207,23 @@ function renderOnlineLobby() {
   if (container) {
     container.innerHTML = gameState.onlinePlayers.map(p => `
       <div class="player-row" style="background: rgba(255,255,255,0.06); padding: 12px 16px; border-radius: 14px; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 18px;">👤</span>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 20px;">👤</span>
           <span style="font-weight: 800; font-size: 16px;">${escapeHtml(p.name)} ${p.id === gameState.myPlayerId ? ' <span style="color: var(--secondary); font-size: 13px;">(Вы)</span>' : ''}</span>
         </div>
-        ${p.isHost ? '<span class="team-badge">👑 Хост</span>' : '<span class="setting-hint" style="color: var(--success);">🟢 В сети</span>'}
+        ${p.isHost ? '<span class="team-badge">👑 Хост</span>' : '<span class="setting-hint" style="color: var(--success); font-weight: 700;">🟢 В сети</span>'}
       </div>
     `).join('');
   }
 
   const startBtn = document.getElementById('btn-host-start-setup');
   if (startBtn) {
-    startBtn.style.display = gameState.isHost ? 'flex' : 'none';
+    if (gameState.isHost) {
+      startBtn.style.display = 'flex';
+      startBtn.textContent = `🎲 Перемешать ${gameState.onlinePlayers.length} игроков по парам и начать ➔`;
+    } else {
+      startBtn.style.display = 'none';
+    }
   }
 }
 
@@ -321,7 +316,6 @@ function switchSetupMode(mode) {
   }
 }
 
-// РЕЖИМ 1: РЕНДЕР ПРОСТОГО СПИСКА УЧАСТНИКОВ
 function renderRandomPlayers() {
   const container = document.getElementById('random-players-list');
   if (!container) return;
@@ -355,10 +349,11 @@ function removeRawPlayer(idx) {
   }
 }
 
-// Перемешать простой список участников по парам
+// Автоматическое распределение подключенных игроков по парам и старт игры
 function shuffleRawPairs() {
   let valid = [];
   if (gameState.playMode === 'online') {
+    // Берём имена ВСЕХ подключённых в комнату игроков
     valid = gameState.onlinePlayers.map(p => p.name.trim()).filter(n => n.length > 0);
   } else {
     valid = gameState.rawPlayerNames.map(n => n.trim()).filter(n => n.length > 0);
@@ -373,6 +368,7 @@ function shuffleRawPairs() {
     valid.push(`Игрок ${valid.length + 1}`);
   }
 
+  // Алгоритм Fisher-Yates
   for (let i = valid.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [valid[i], valid[j]] = [valid[j], valid[i]];
@@ -389,6 +385,7 @@ function shuffleRawPairs() {
     });
   }
 
+  // Если это Онлайн — хост рассылает расформированные команды ВСЕМ игрокам и запускает ввод слов!
   if (gameState.playMode === 'online' && roomChannel && gameState.isHost) {
     roomChannel.send({
       type: 'broadcast',
@@ -399,6 +396,10 @@ function shuffleRawPairs() {
         turnSeconds: gameState.turnSeconds
       }
     });
+
+    startWordEntry();
+  } else if (gameState.playMode === 'local') {
+    alert(`🎉 Участники успешно распределены на ${gameState.teams.length} пары!`);
   }
 }
 
@@ -468,7 +469,7 @@ function removeTeam(tIdx) {
 // --------------------------------------------------------------------------
 
 function startWordEntry() {
-  if (gameState.currentMode === 'random' && gameState.teams.length === 0) {
+  if (gameState.playMode === 'local' && gameState.currentMode === 'random' && gameState.teams.length === 0) {
     shuffleRawPairs();
   }
 
@@ -482,7 +483,7 @@ function renderWordEntryPlayer() {
   const allPlayers = getAllPlayers();
   const player = allPlayers[gameState.wordEntryPlayerIndex];
   
-  const progressPercent = ((gameState.wordEntryPlayerIndex + 1) / allPlayers.length) * 100;
+  const progressPercent = ((gameState.wordEntryPlayerIndex + 1) / (allPlayers.length || 1)) * 100;
   document.getElementById('word-entry-progress').style.width = `${progressPercent}%`;
 
   document.getElementById('privacy-player-name').textContent = player ? player.name : 'Игрок';
