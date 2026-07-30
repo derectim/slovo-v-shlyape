@@ -1,6 +1,6 @@
 /**
  * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
- * Встроенный Supabase Realtime Presence & Broadcast Engine.
+ * Встроенный нативный високоскоростной WebSocket 0мс (Switching Protocols HTTP 101).
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -12,20 +12,9 @@ if (window.vkBridge) {
   }
 }
 
-// Переменные Supabase Realtime
-let supabaseClient = null;
-let roomChannel = null;
-
-if (window.supabase && typeof window.supabase.createClient === 'function') {
-  try {
-    supabaseClient = window.supabase.createClient(
-      'https://xkmtlwrudyspxwzwndrh.supabase.co',
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhrbXRsd3J1ZHlzcHh3enduZHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE2ODg4NjM2NzAsImV4cCI6MjAwNDQzOTY3MH0.dExEBRGZ39e7K-4T_OqXpS-2QJ4c-f1g0p0M7HqG9k0'
-    );
-  } catch (e) {
-    console.error('Supabase init error:', e);
-  }
-}
+// Сетевые переменные WebSocket
+let roomSocket = null;
+let roomSyncInterval = null;
 
 // Игровые Константы Раундов
 const ROUNDS = [
@@ -97,7 +86,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С SUPABASE REALTIME PRESENCE
+// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С НАТИВНЫМ WEBSOCKET (0 мс)
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -121,9 +110,9 @@ function createOnlineRoom() {
   gameState.onlineRoomCode = generateRoomCode();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true, lastActive: Date.now() }];
 
-  connectSupabaseRoom(gameState.onlineRoomCode);
+  connectPieSocketRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
@@ -138,79 +127,123 @@ function joinOnlineRoom(code) {
   gameState.onlineRoomCode = code.toUpperCase();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false, lastActive: Date.now() }];
 
-  connectSupabaseRoom(gameState.onlineRoomCode);
+  connectPieSocketRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
 
-function connectSupabaseRoom(code) {
-  if (!supabaseClient) {
-    console.error('Supabase Client not ready');
-    return;
+function connectPieSocketRoom(code) {
+  if (roomSocket) {
+    try { roomSocket.close(); } catch (e) {}
   }
+  clearInterval(roomSyncInterval);
 
-  if (roomChannel) {
-    try { supabaseClient.removeChannel(roomChannel); } catch (e) {}
-  }
+  // Прямое вещание через подлинный нативный WebSocket
+  const wsUrl = `wss://demo.piesocket.com/v3/shlyapa_room_${code}?api_key=VCXSpRHDAAbWuZWwu9FGkuQLnvLEHJ7Zosg9wVbx&notify_self=1`;
 
-  roomChannel = supabaseClient.channel(`shlyapa_room_${code}`, {
-    config: {
-      presence: {
-        key: gameState.myPlayerId
-      },
-      broadcast: {
-        self: true,
-        ack: true
-      }
-    }
-  });
+  try {
+    roomSocket = new WebSocket(wsUrl);
 
-  // 1. АВТО-ПРИСУТСТВИЕ: При любом входе/выходе Supabase формирует список активных участников!
-  roomChannel.on('presence', { event: 'sync' }, () => {
-    const state = roomChannel.presenceState();
-    const map = new Map();
-
-    Object.keys(state).forEach(key => {
-      state[key].forEach(user => {
-        if (user && user.id) {
-          map.set(user.id, {
-            id: user.id,
-            name: user.name || 'Игрок',
-            isHost: !!user.isHost
-          });
-        }
-      });
-    });
-
-    const activeList = Array.from(map.values());
-    if (activeList.length > 0) {
-      gameState.onlinePlayers = activeList;
-      renderOnlineLobby();
-    }
-  });
-
-  // 2. ВЕЩАНИЕ (BROADCAST): Старт партии у всех участников одновременно!
-  roomChannel.on('broadcast', { event: 'start_game' }, ({ payload }) => {
-    if (payload && payload.teams) {
-      gameState.teams = payload.teams;
-      gameState.wordsPerPlayer = payload.wordsPerPlayer || 5;
-      gameState.turnSeconds = payload.turnSeconds || 60;
-      startWordEntry();
-    }
-  });
-
-  // 3. ПОДПИСКА И ТРЕКИНГ МЕСТОПОЛОЖЕНИЯ
-  roomChannel.subscribe(async (status) => {
-    if (status === 'SUBSCRIBED') {
-      await roomChannel.track({
+    roomSocket.onopen = () => {
+      broadcastRoomPayload({
+        type: 'join',
         id: gameState.myPlayerId,
         name: getMyName(),
         isHost: gameState.isHost
       });
-    }
-  });
+    };
+
+    roomSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data) {
+          if (data.type === 'join' || data.type === 'heartbeat') {
+            handleIncomingPlayer(data);
+          } else if (data.type === 'sync_players') {
+            if (!gameState.isHost && data.players) {
+              gameState.onlinePlayers = data.players;
+              renderOnlineLobby();
+            }
+          } else if (data.type === 'start_game') {
+            gameState.teams = data.teams;
+            gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
+            gameState.turnSeconds = data.turnSeconds || 60;
+            startWordEntry();
+          }
+        }
+      } catch (err) {}
+    };
+
+    roomSocket.onerror = (e) => {
+      console.warn('WebSocket error, retrying...', e);
+    };
+
+    roomSocket.onclose = () => {
+      setTimeout(() => {
+        if (gameState.playMode === 'online' && gameState.onlineRoomCode === code) {
+          connectPieSocketRoom(code);
+        }
+      }, 2000);
+    };
+
+    // Периодический пульс вещания
+    roomSyncInterval = setInterval(() => {
+      broadcastRoomPayload({
+        type: 'heartbeat',
+        id: gameState.myPlayerId,
+        name: getMyName(),
+        isHost: gameState.isHost
+      });
+
+      if (gameState.isHost) {
+        const now = Date.now();
+        const activePlayers = gameState.onlinePlayers.filter(p => p.id === gameState.myPlayerId || (now - (p.lastActive || now)) < 8000);
+        if (activePlayers.length !== gameState.onlinePlayers.length) {
+          gameState.onlinePlayers = activePlayers;
+          renderOnlineLobby();
+        }
+        broadcastRoomPayload({
+          type: 'sync_players',
+          players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
+        });
+      }
+    }, 1200);
+
+  } catch (e) {
+    console.error('WebSocket connection failed:', e);
+  }
+}
+
+function broadcastRoomPayload(payloadObj) {
+  if (roomSocket && roomSocket.readyState === WebSocket.OPEN) {
+    try {
+      roomSocket.send(JSON.stringify(payloadObj));
+    } catch (e) {}
+  }
+}
+
+function handleIncomingPlayer(msg) {
+  const now = Date.now();
+  const existing = gameState.onlinePlayers.find(p => p.id === msg.id);
+
+  if (!existing) {
+    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: msg.isHost, lastActive: now });
+  } else {
+    existing.name = msg.name;
+    existing.lastActive = now;
+    if (msg.isHost) existing.isHost = true;
+  }
+
+  renderOnlineLobby();
+
+  if (gameState.isHost) {
+    broadcastRoomPayload({
+      type: 'sync_players',
+      players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
+    });
+  }
 }
 
 function renderOnlineLobby() {
@@ -391,15 +424,12 @@ function shuffleRawPairs() {
     });
   }
 
-  if (gameState.playMode === 'online' && gameState.isHost && roomChannel) {
-    roomChannel.send({
-      type: 'broadcast',
-      event: 'start_game',
-      payload: {
-        teams: gameState.teams,
-        wordsPerPlayer: gameState.wordsPerPlayer,
-        turnSeconds: gameState.turnSeconds
-      }
+  if (gameState.playMode === 'online' && gameState.isHost) {
+    broadcastRoomPayload({
+      type: 'start_game',
+      teams: gameState.teams,
+      wordsPerPlayer: gameState.wordsPerPlayer,
+      turnSeconds: gameState.turnSeconds
     });
 
     startWordEntry();
@@ -1003,7 +1033,7 @@ function initApp() {
   if (btnForceRefresh) {
     btnForceRefresh.addEventListener('click', () => {
       if (gameState.onlineRoomCode) {
-        connectSupabaseRoom(gameState.onlineRoomCode);
+        connectPieSocketRoom(gameState.onlineRoomCode);
       }
     });
   }
