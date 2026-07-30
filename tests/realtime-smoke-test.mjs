@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-const baseUrl = process.env.GAME_WS_URL || 'ws://127.0.0.1:8787';
+const baseUrl = process.argv[2] || process.env.GAME_WS_URL || 'ws://127.0.0.1:8787';
 
 function roomUrl(code, playerId, name, role) {
   const query = new URLSearchParams({ playerId, name, role });

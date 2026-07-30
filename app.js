@@ -1,6 +1,6 @@
 /**
  * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
- * Онлайн-комнаты на PeerJS/WebRTC с прямой передачей данных между устройствами.
+ * Онлайн-комнаты через серверный WebSocket для совместимости с Telegram, VK и браузерами.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -12,27 +12,20 @@ if (window.vkBridge) {
   }
 }
 
-// Сетевые переменные PeerJS/WebRTC. PeerJS Cloud используется только для
-// согласования соединения, игровые данные идут напрямую между устройствами.
-let peerClient = null;
-let hostConnection = null;
-let hostConnections = new Map();
+// Сетевые переменные серверного WebSocket-мультиплеера.
+let roomSocket = null;
 let hostWordSubmissions = new Map();
 let hasSubmittedWords = false;
 let roomSyncInterval = null;
 let reconnectTimer = null;
 let connectionState = 'offline';
+let socketGeneration = 0;
+let hostCollisionAttempts = 0;
 
-const PEER_ROOM_PREFIX = 'slovo-v-shlyape-room-';
-const PEER_OPTIONS = {
-  debug: 0,
-  config: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
-    ]
-  }
-};
+const MULTIPLAYER_SERVER_URL = window.__GAME_WS_URL__
+  || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'ws://127.0.0.1:8787'
+    : 'wss://young-forest-dcd5.derectim50.workers.dev');
 
 // Игровые Константы Раундов
 const ROUNDS = [
@@ -155,10 +148,6 @@ function joinOnlineRoom(code) {
   initGuestPeer(gameState.onlineRoomCode);
 }
 
-function getHostPeerId(code) {
-  return `${PEER_ROOM_PREFIX}${code}`;
-}
-
 function setConnectionStatus(state, message) {
   connectionState = state;
   const status = document.getElementById('lobby-connection-status');
@@ -179,22 +168,13 @@ function destroyPeerNetwork() {
   clearTimeout(reconnectTimer);
   roomSyncInterval = null;
   reconnectTimer = null;
-
-  if (hostConnection) {
-    try { hostConnection.close(); } catch (e) {}
-  }
-  hostConnection = null;
-
-  hostConnections.forEach(connection => {
-    try { connection.close(); } catch (e) {}
-  });
-  hostConnections.clear();
+  socketGeneration += 1;
   hostWordSubmissions.clear();
 
-  if (peerClient) {
-    try { peerClient.destroy(); } catch (e) {}
+  if (roomSocket) {
+    try { roomSocket.close(1000, 'Leaving room'); } catch (e) {}
   }
-  peerClient = null;
+  roomSocket = null;
   connectionState = 'offline';
 }
 
@@ -218,175 +198,118 @@ function reconnectPeerRoom() {
 }
 
 function initHostPeer(code, collisionAttempt = 0) {
-  if (!window.Peer) {
-    setConnectionStatus('error', '● Сетевая библиотека не загрузилась');
-    return;
-  }
-
-  setConnectionStatus('connecting', '● Создаём комнату…');
-  peerClient = new Peer(getHostPeerId(code), PEER_OPTIONS);
-
-  peerClient.on('open', () => {
-    setConnectionStatus('online', '● Комната доступна — можно приглашать игроков');
-    startRoomHeartbeat();
-  });
-
-  peerClient.on('connection', connection => {
-    registerHostConnection(connection);
-  });
-
-  peerClient.on('disconnected', () => {
-    setConnectionStatus('connecting', '● Восстанавливаем комнату…');
-    try { peerClient.reconnect(); } catch (e) {}
-  });
-
-  peerClient.on('error', error => {
-    if (error.type === 'unavailable-id' && collisionAttempt < 8) {
-      const nextCode = generateRoomCode();
-      gameState.onlineRoomCode = nextCode;
-      renderOnlineLobby();
-      try { peerClient.destroy(); } catch (e) {}
-      peerClient = null;
-      setTimeout(() => initHostPeer(nextCode, collisionAttempt + 1), 150);
-      return;
-    }
-    console.error('Peer host error:', error);
-    setConnectionStatus('error', `● Ошибка сети: ${peerErrorMessage(error)}`);
-  });
-}
-
-function registerHostConnection(connection) {
-  const connectionKey = connection.connectionId || `${connection.peer}-${Date.now()}`;
-  hostConnections.set(connectionKey, connection);
-
-  connection.on('open', () => {
-    connection.send({
-      type: 'sync_players',
-      players: publicPlayersList()
-    });
-  });
-
-  connection.on('data', data => {
-    if (!data || typeof data !== 'object') return;
-    if (data.type === 'join' || data.type === 'heartbeat') {
-      connection.playerId = data.id;
-      handleIncomingPlayer(data);
-    } else if (data.type === 'submit_words') {
-      connection.playerId = data.playerId;
-      handleOnlineWordSubmission(data);
-    } else if (data.type === 'request_sync') {
-      connection.send({ type: 'sync_players', players: publicPlayersList() });
-    }
-  });
-
-  const removeConnection = () => {
-    hostConnections.delete(connectionKey);
-    if (connection.playerId) {
-      gameState.onlinePlayers = gameState.onlinePlayers.filter(player => player.id !== connection.playerId);
-      renderOnlineLobby();
-      broadcastPlayersList();
-    }
-  };
-
-  connection.on('close', removeConnection);
-  connection.on('error', error => {
-    console.warn('Peer connection error:', error);
-    removeConnection();
-  });
+  hostCollisionAttempts = collisionAttempt;
+  connectRoomSocket(code, true);
 }
 
 function initGuestPeer(code) {
-  if (!window.Peer) {
-    setConnectionStatus('error', '● Сетевая библиотека не загрузилась');
-    return;
+  connectRoomSocket(code, false);
+}
+
+function connectRoomSocket(code, isHost) {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  socketGeneration += 1;
+  const generation = socketGeneration;
+
+  if (roomSocket) {
+    try { roomSocket.close(1000, 'Reconnecting'); } catch (e) {}
   }
 
-  setConnectionStatus('connecting', '● Подключаемся к комнате…');
-  peerClient = new Peer(undefined, PEER_OPTIONS);
-
-  peerClient.on('open', () => connectGuestToHost(code));
-  peerClient.on('disconnected', () => {
-    setConnectionStatus('connecting', '● Восстанавливаем соединение…');
-    try { peerClient.reconnect(); } catch (e) {}
+  const query = new URLSearchParams({
+    playerId: gameState.myPlayerId,
+    name: getMyName(),
+    role: isHost ? 'host' : 'guest'
   });
-  peerClient.on('error', error => {
-    if (error.type === 'peer-unavailable') {
+  const socketUrl = `${MULTIPLAYER_SERVER_URL}/rooms/${code}?${query.toString()}`;
+  setConnectionStatus('connecting', isHost ? '● Создаём комнату…' : '● Подключаемся к ведущему…');
+
+  let socket;
+  try {
+    socket = new WebSocket(socketUrl);
+  } catch (error) {
+    console.error('WebSocket init error:', error);
+    setConnectionStatus('error', '● Не удалось открыть сетевое соединение');
+    scheduleGuestReconnect(code);
+    return;
+  }
+  roomSocket = socket;
+
+  socket.addEventListener('open', () => {
+    if (generation !== socketGeneration || roomSocket !== socket) return;
+    setConnectionStatus('online', isHost
+      ? '● Комната доступна — можно приглашать игроков'
+      : '● Подключено к комнате');
+    sendSocketPayload({ type: 'request_sync' });
+    startRoomHeartbeat();
+  });
+
+  socket.addEventListener('message', event => {
+    if (generation !== socketGeneration || roomSocket !== socket) return;
+    let data;
+    try { data = JSON.parse(event.data); } catch (error) { return; }
+    handleRoomSocketMessage(data, code, isHost);
+  });
+
+  socket.addEventListener('close', event => {
+    if (generation !== socketGeneration || roomSocket !== socket) return;
+    clearInterval(roomSyncInterval);
+    roomSyncInterval = null;
+    roomSocket = null;
+    if (gameState.playMode !== 'online' || gameState.onlineRoomCode !== code) return;
+    if (event.code === 4002 || event.code === 4003) return;
+    setConnectionStatus('connecting', '● Соединение потеряно, переподключаемся…');
+    scheduleGuestReconnect(code);
+  });
+
+  socket.addEventListener('error', error => {
+    if (generation !== socketGeneration || roomSocket !== socket) return;
+    console.warn('Room WebSocket error:', error);
+    setConnectionStatus('connecting', '● Сервер временно недоступен, повторяем…');
+  });
+}
+
+function handleRoomSocketMessage(data, code, isHost) {
+  if (!data || typeof data !== 'object') return;
+  if (data.type === 'room_error') {
+    if (data.error === 'room_exists' && isHost && hostCollisionAttempts < 8) {
+      hostCollisionAttempts += 1;
+      const nextCode = generateRoomCode();
+      gameState.onlineRoomCode = nextCode;
+      renderOnlineLobby();
+      setTimeout(() => connectRoomSocket(nextCode, true), 150);
+      return;
+    }
+    if (data.error === 'room_missing') {
       setConnectionStatus('connecting', '● Ждём ведущего комнаты…');
       scheduleGuestReconnect(code);
       return;
     }
-    console.error('Peer guest error:', error);
-    setConnectionStatus('error', `● Ошибка сети: ${peerErrorMessage(error)}`);
-    scheduleGuestReconnect(code);
-  });
-}
-
-function connectGuestToHost(code) {
-  if (!peerClient || peerClient.destroyed || !peerClient.open) return;
-
-  clearTimeout(reconnectTimer);
-  reconnectTimer = null;
-
-  if (hostConnection) {
-    try { hostConnection.close(); } catch (e) {}
+    setConnectionStatus('error', '● Не удалось войти в комнату');
+    return;
   }
-
-  setConnectionStatus('connecting', '● Подключаемся к ведущему…');
-  hostConnection = peerClient.connect(getHostPeerId(code), {
-    reliable: true,
-    metadata: { playerId: gameState.myPlayerId }
-  });
-  const currentConnection = hostConnection;
-
-  currentConnection.on('open', () => {
-    if (hostConnection !== currentConnection) return;
-    setConnectionStatus('online', '● Подключено к комнате');
-    sendGuestPresence('join');
-    currentConnection.send({ type: 'request_sync' });
-    startRoomHeartbeat();
-  });
-
-  currentConnection.on('data', data => {
-    if (hostConnection !== currentConnection) return;
-    if (!data || typeof data !== 'object') return;
-    if (data.type === 'sync_players' && Array.isArray(data.players)) {
-      gameState.onlinePlayers = data.players;
-      renderOnlineLobby();
-    } else if (data.type === 'start_game') {
-      gameState.teams = data.teams;
-      gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
-      gameState.turnSeconds = data.turnSeconds || 60;
-      startWordEntry();
-    } else if (data.type === 'word_progress') {
-      if (hasSubmittedWords) showOnlineWordProgress(data.submitted || 0, data.total || 0);
-    } else if (data.type === 'game_ready') {
-      beginOnlineGame(data);
-    }
-  });
-
-  currentConnection.on('close', () => {
-    if (hostConnection !== currentConnection) return;
-    clearInterval(roomSyncInterval);
-    setConnectionStatus('connecting', '● Соединение потеряно, переподключаемся…');
-    scheduleGuestReconnect(code);
-  });
-  currentConnection.on('error', error => {
-    if (hostConnection !== currentConnection) return;
-    console.warn('Host connection error:', error);
-    setConnectionStatus('connecting', '● Не удалось подключиться, повторяем…');
-    scheduleGuestReconnect(code);
-  });
+  if (data.type === 'sync_players' && Array.isArray(data.players)) {
+    gameState.onlinePlayers = data.players;
+    renderOnlineLobby();
+  } else if (isHost && data.type === 'submit_words') {
+    handleOnlineWordSubmission(data);
+  } else if (!isHost && data.type === 'start_game') {
+    gameState.teams = data.teams;
+    gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
+    gameState.turnSeconds = data.turnSeconds || 60;
+    startWordEntry();
+  } else if (!isHost && data.type === 'word_progress') {
+    if (hasSubmittedWords) showOnlineWordProgress(data.submitted || 0, data.total || 0);
+  } else if (!isHost && data.type === 'game_ready') {
+    beginOnlineGame(data);
+  }
 }
 
 function scheduleGuestReconnect(code) {
   clearTimeout(reconnectTimer);
-  if (gameState.playMode !== 'online' || gameState.isHost || gameState.onlineRoomCode !== code) return;
+  if (gameState.playMode !== 'online' || gameState.onlineRoomCode !== code) return;
   reconnectTimer = setTimeout(() => {
-    if (!peerClient || peerClient.destroyed) {
-      initGuestPeer(code);
-    } else if (peerClient.open) {
-      connectGuestToHost(code);
-    }
+    connectRoomSocket(code, gameState.isHost);
   }, 1800);
 }
 
@@ -394,53 +317,26 @@ function startRoomHeartbeat() {
   clearInterval(roomSyncInterval);
   roomSyncInterval = setInterval(() => {
     if (gameState.playMode !== 'online') return;
-
-    if (gameState.isHost) {
-      const cutoff = Date.now() - 12000;
-      const activePlayers = gameState.onlinePlayers.filter(player => player.isHost || (player.lastActive || 0) >= cutoff);
-      if (activePlayers.length !== gameState.onlinePlayers.length) {
-        gameState.onlinePlayers = activePlayers;
-        renderOnlineLobby();
-      }
-      broadcastPlayersList();
-    } else {
-      sendGuestPresence('heartbeat');
-    }
-  }, 3000);
+    sendSocketPayload({ type: 'heartbeat' });
+  }, 15000);
 }
 
-function sendGuestPresence(type) {
-  if (!hostConnection || !hostConnection.open) return;
-  hostConnection.send({
-    type,
-    id: gameState.myPlayerId,
-    name: getMyName(),
-    isHost: false
-  });
+function sendSocketPayload(payloadObj) {
+  if (!roomSocket || roomSocket.readyState !== WebSocket.OPEN) return false;
+  try {
+    roomSocket.send(JSON.stringify(payloadObj));
+    return true;
+  } catch (error) {
+    return false;
+  }
 }
 
 function broadcastRoomPayload(payloadObj) {
-  if (gameState.isHost) broadcastToPeers(payloadObj);
-  else if (hostConnection && hostConnection.open) hostConnection.send(payloadObj);
+  sendSocketPayload(payloadObj);
 }
 
 function broadcastToPeers(payloadObj) {
-  hostConnections.forEach(connection => {
-    if (!connection.open) return;
-    try { connection.send(payloadObj); } catch (e) {}
-  });
-}
-
-function publicPlayersList() {
-  return gameState.onlinePlayers.map(player => ({
-    id: player.id,
-    name: player.name,
-    isHost: !!player.isHost
-  }));
-}
-
-function broadcastPlayersList() {
-  broadcastToPeers({ type: 'sync_players', players: publicPlayersList() });
+  if (gameState.isHost) sendSocketPayload(payloadObj);
 }
 
 function handleOnlineWordSubmission(data) {
@@ -516,32 +412,6 @@ function shuffleCards(cards) {
     [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
   }
   return shuffled;
-}
-
-function peerErrorMessage(error) {
-  const messages = {
-    network: 'нет доступа к сети',
-    'server-error': 'сервер согласования недоступен',
-    'socket-error': 'ошибка сетевого соединения',
-    'browser-incompatible': 'браузер не поддерживает WebRTC',
-    'ssl-unavailable': 'защищённое соединение недоступно'
-  };
-  return messages[error && error.type] || 'подключение не установлено';
-}
-
-function handleIncomingPlayer(msg) {
-  const now = Date.now();
-  const existing = gameState.onlinePlayers.find(p => p.id === msg.id);
-
-  if (!existing) {
-    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: false, lastActive: now });
-  } else {
-    existing.name = msg.name;
-    existing.lastActive = now;
-  }
-
-  renderOnlineLobby();
-  broadcastPlayersList();
 }
 
 function renderOnlineLobby() {

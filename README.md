@@ -57,3 +57,16 @@ flutter run
 5. Тематические наборы слов.
 6. Онлайн-комнаты по коду.
 7. Подготовка иконки, логотипа и экранов магазинов приложений.
+
+## Сервер онлайн-комнат
+
+Версия 2.4.0 использует обычный защищённый WebSocket вместо прямых WebRTC-соединений. Комнаты обслуживает Cloudflare Worker с Durable Object, поэтому один и тот же список игроков доступен в VK Mini Apps, Telegram Mini Apps и обычном браузере.
+
+```powershell
+npm.cmd install
+npm.cmd run dev:worker
+npm.cmd run test:realtime
+npm.cmd run deploy:worker
+```
+
+Адрес опубликованного Worker задаётся константой `MULTIPLAYER_SERVER_URL` в `app.js`. Для локальной разработки автоматически используется `ws://127.0.0.1:8787`.
