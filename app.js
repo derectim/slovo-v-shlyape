@@ -144,25 +144,58 @@ function renderOnlineLobby() {
 }
 
 function shareRoomLink() {
-  const roomUrl = `${window.location.origin}${window.location.pathname}#room=${gameState.onlineRoomCode}`;
-  
+  const code = gameState.onlineRoomCode || '7392';
+  const roomUrl = `https://derectim.github.io/slovo-v-shlyape/#room=${code}`;
+  const shareText = `🎩 Сыграем в «Слово в шляпе»! Заходи в комнату по коду: ${code}\n${roomUrl}`;
+
+  // 1. Попытка использования VK Bridge (если в ВК)
   if (window.vkBridge && typeof window.vkBridge.send === 'function') {
     try {
-      window.vkBridge.send('VKWebAppShare', { link: roomUrl });
+      window.vkBridge.send('VKWebAppShare', { link: roomUrl })
+        .then(data => { if (data && data.result) console.log('VK Share ok'); })
+        .catch(() => fallbackCopy(shareText, code));
       return;
     } catch (e) {}
   }
 
-  if (navigator.share) {
+  // 2. Попытка нативного шеринга на смартфонах
+  if (navigator.share && /mobile|android|iphone|ipad/i.test(navigator.userAgent)) {
     navigator.share({
-      title: 'Слово в шляпе — Присоединяйся к игре!',
-      text: `Заходи в мою онлайн-комнату! Код: ${gameState.onlineRoomCode}`,
+      title: 'Слово в шляпе — Онлайн игра',
+      text: `Сыграем в «Слово в шляпе»! Заходи в комнату по коду: ${code}`,
       url: roomUrl
-    }).catch(() => {});
+    }).catch(() => fallbackCopy(shareText, code));
   } else {
-    navigator.clipboard.writeText(roomUrl);
-    alert(`Ссылка скопирована в буфер обмена!\nКод комнаты: ${gameState.onlineRoomCode}`);
+    // 3. Надежный Фолбэк для ПК и любых браузеров
+    fallbackCopy(shareText, code);
   }
+}
+
+function fallbackCopy(textToCopy, code) {
+  let success = false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(textToCopy);
+      success = true;
+    }
+  } catch (e) {}
+
+  if (!success) {
+    const tempInput = document.createElement('textarea');
+    tempInput.value = textToCopy;
+    tempInput.style.position = 'fixed';
+    tempInput.style.left = '-9999px';
+    document.body.appendChild(tempInput);
+    tempInput.focus();
+    tempInput.select();
+    try {
+      document.execCommand('copy');
+      success = true;
+    } catch (err) {}
+    document.body.removeChild(tempInput);
+  }
+
+  alert(`📋 Ссылка и код комнаты ${code} скопированы в буфер обмена!\n\nОтправьте её друзьям в чат Telegram или VK!`);
 }
 
 // Проверка входной ссылки с кодом комнаты (#room=7392 или ?room=7392)
