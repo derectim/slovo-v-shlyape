@@ -944,51 +944,59 @@ function renderOnlineLobby() {
   }
 }
 
-function shareRoomLink() {
+async function shareRoomLink() {
   const code = gameState.onlineRoomCode || '7392';
   const roomUrl = `https://derectim.github.io/slovo-v-shlyape/#room=${code}`;
   const shareText = `🎩 Сыграем в «Слово в шляпе»! Заходи в комнату по коду: ${code}\n${roomUrl}`;
 
-  fallbackCopy(shareText, code, roomUrl);
+  const copied = await copyTextToClipboard(shareText);
+  if (copied) {
+    alert(`📋 Приглашение в комнату ${code} скопировано!\n\nТеперь вставьте его в чат Telegram или VK.`);
+    return;
+  }
+
+  window.prompt('Не удалось получить доступ к буферу обмена. Скопируйте ссылку вручную:', roomUrl);
 }
 
-function fallbackCopy(textToCopy, code, roomUrl) {
-  let success = false;
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(textToCopy);
-      success = true;
+async function copyTextToClipboard(textToCopy) {
+  const bridge = window.vkBridge ? (window.vkBridge.default || window.vkBridge) : null;
+  if (isVkMiniApp && bridge && typeof bridge.send === 'function') {
+    const isEmbedded = typeof bridge.isEmbedded !== 'function' || bridge.isEmbedded();
+    const isSupported = typeof bridge.supports !== 'function' || bridge.supports('VKWebAppCopyText');
+    if (isEmbedded && isSupported) {
+      try {
+        await Promise.race([
+          Promise.resolve(bridge.send('VKWebAppCopyText', { text: textToCopy })),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('VK copy timeout')), 1500))
+        ]);
+        return true;
+      } catch (_) {}
     }
-  } catch (e) {}
+  }
 
-  if (!success) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      return true;
+    } catch (_) {}
+  }
+
+  try {
     const tempInput = document.createElement('textarea');
     tempInput.value = textToCopy;
     tempInput.style.position = 'fixed';
     tempInput.style.left = '-9999px';
+    tempInput.setAttribute('readonly', '');
     document.body.appendChild(tempInput);
     tempInput.focus();
     tempInput.select();
-    try {
-      document.execCommand('copy');
-      success = true;
-    } catch (err) {}
+    tempInput.setSelectionRange(0, tempInput.value.length);
+    const copied = document.execCommand('copy') === true;
     document.body.removeChild(tempInput);
+    return copied;
+  } catch (_) {
+    return false;
   }
-
-  if (navigator.share && /mobile|android|iphone|ipad/i.test(navigator.userAgent)) {
-    navigator.share({
-      title: 'Слово в шляпе — Онлайн игра',
-      text: `Сыграем в «Слово в шляпе»! Заходи в комнату по коду: ${code}`,
-      url: roomUrl
-    }).catch(() => {});
-  } else if (window.vkBridge && typeof window.vkBridge.send === 'function') {
-    try {
-      window.vkBridge.send('VKWebAppShare', { link: roomUrl }).catch(() => {});
-    } catch (e) {}
-  }
-
-  alert(`📋 Ссылка на комнату ${code} скопирована в буфер обмена!\n\nОтправьте её друзьям в чат Telegram или VK!`);
 }
 
 function extractRoomCodeFromLocation(hash = window.location.hash, search = window.location.search) {
