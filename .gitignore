@@ -8,3 +8,9 @@ build/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Cloudflare Worker tooling
+node_modules/
+.wrangler/
+.dev.vars
+npm-debug.log*
