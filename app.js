@@ -1,5 +1,5 @@
 /**
- * «Слово в шляпе» — Локальный режим (1 устройство) + Онлайн-мультиплеер по коду комнаты.
+ * «Слово в шляпе» — Локальный режим (1 устройство) + Онлайн-мультиплеер по коду комнаты с Supabase Realtime WebSockets.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -8,6 +8,21 @@ if (window.vkBridge) {
     window.vkBridge.send('VKWebAppInit', {});
   } catch (e) {
     console.log('VK Bridge init skipped');
+  }
+}
+
+// Supabase Realtime WebSockets для мгновенной связи между устройствами (100% бесплатно и устойчиво в РФ/СНГ)
+const SUPABASE_URL = 'https://xkmtlwrudyspxwzwndrh.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhrbXRsd3J1ZHlzcHh3enduZHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE2ODg4NjM2NzAsImV4cCI6MjAwNDQzOTY3MH0.dExEBRGZ39e7K-4T_OqXpS-2QJ4c-f1g0p0M7HqG9k0';
+
+let supabaseClient = null;
+let roomChannel = null;
+
+if (window.supabase) {
+  try {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  } catch (e) {
+    console.log('Supabase client error:', e);
   }
 }
 
@@ -36,7 +51,8 @@ let gameState = {
   currentMode: 'random', // 'random' или 'manual'
   onlineRoomCode: null,
   isHost: false,
-  myPlayerId: Math.random().toString(36).substr(2, 6),
+  myPlayerId: 'p_' + Math.random().toString(36).substr(2, 6),
+  myPlayerName: '',
   rawPlayerNames: ['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4'],
   onlinePlayers: [],
   teams: [
@@ -80,8 +96,19 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. ОНЛАЙН МУЛЬТИПЛЕЕР (ХАБ И ЛОББИ КОМНАТ)
+// 0. ОНЛАЙН МУЛЬТИПЛЕЕР С WSS (REALTIME LOBBY & BROADCAST)
 // --------------------------------------------------------------------------
+
+function getMyName() {
+  const input = document.getElementById('input-online-player-name');
+  if (input && input.value.trim()) {
+    gameState.myPlayerName = input.value.trim();
+  }
+  if (!gameState.myPlayerName) {
+    gameState.myPlayerName = `Игрок ${Math.floor(10 + Math.random() * 90)}`;
+  }
+  return gameState.myPlayerName;
+}
 
 function generateRoomCode() {
   return Math.floor(1000 + Math.random() * 9000).toString();
@@ -91,10 +118,11 @@ function createOnlineRoom() {
   gameState.playMode = 'online';
   gameState.isHost = true;
   gameState.onlineRoomCode = generateRoomCode();
+  const myName = getMyName();
 
-  const myName = `Игрок ${Math.floor(10 + Math.random() * 90)}`;
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
 
+  connectRoomWebSocket(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
@@ -107,15 +135,77 @@ function joinOnlineRoom(code) {
   gameState.playMode = 'online';
   gameState.isHost = false;
   gameState.onlineRoomCode = code.toUpperCase();
+  const myName = getMyName();
 
-  const myName = `Игрок ${Math.floor(10 + Math.random() * 90)}`;
-  gameState.onlinePlayers = [
-    { id: 'host_id', name: 'Организатор', isHost: true },
-    { id: gameState.myPlayerId, name: myName, isHost: false }
-  ];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false }];
 
+  connectRoomWebSocket(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
+}
+
+function connectRoomWebSocket(roomCode) {
+  if (!supabaseClient) return;
+
+  if (roomChannel) {
+    supabaseClient.removeChannel(roomChannel);
+  }
+
+  // Открываем WSS канал комнаты
+  roomChannel = supabaseClient.channel(`room_${roomCode}`, {
+    config: { broadcast: { self: true } }
+  });
+
+  roomChannel
+    .on('broadcast', { event: 'join_announce' }, ({ payload }) => {
+      handlePlayerAnnounce(payload);
+    })
+    .on('broadcast', { event: 'sync_players' }, ({ payload }) => {
+      if (!gameState.isHost && payload.players) {
+        gameState.onlinePlayers = payload.players;
+        renderOnlineLobby();
+      }
+    })
+    .on('broadcast', { event: 'start_game' }, ({ payload }) => {
+      if (payload.teams) {
+        gameState.teams = payload.teams;
+        gameState.wordsPerPlayer = payload.wordsPerPlayer || 5;
+        gameState.turnSeconds = payload.turnSeconds || 60;
+        startWordEntry();
+      }
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        // Отправляем огласку о своем присутствии
+        roomChannel.send({
+          type: 'broadcast',
+          event: 'join_announce',
+          payload: { id: gameState.myPlayerId, name: gameState.myPlayerName, isHost: gameState.isHost }
+        });
+      }
+    });
+}
+
+function handlePlayerAnnounce(player) {
+  const exists = gameState.onlinePlayers.some(p => p.id === player.id);
+  if (!exists) {
+    gameState.onlinePlayers.push(player);
+  } else {
+    // Обновляем имя если сменилось
+    const p = gameState.onlinePlayers.find(p => p.id === player.id);
+    if (p) p.name = player.name;
+  }
+
+  renderOnlineLobby();
+
+  // Хост рассылает полный актуальный список игроков
+  if (gameState.isHost && roomChannel) {
+    roomChannel.send({
+      type: 'broadcast',
+      event: 'sync_players',
+      payload: { players: gameState.onlinePlayers }
+    });
+  }
 }
 
 function renderOnlineLobby() {
@@ -126,20 +216,19 @@ function renderOnlineLobby() {
   const container = document.getElementById('lobby-players-list');
   if (container) {
     container.innerHTML = gameState.onlinePlayers.map(p => `
-      <div class="player-row" style="background: rgba(255,255,255,0.06); padding: 10px 14px; border-radius: 12px; justify-content: space-between;">
-        <span style="font-weight: 700;">${escapeHtml(p.name)} ${p.id === gameState.myPlayerId ? ' (Вы)' : ''}</span>
-        ${p.isHost ? '<span class="team-badge">👑 Хост</span>' : '<span class="setting-hint">Подключен</span>'}
+      <div class="player-row" style="background: rgba(255,255,255,0.06); padding: 12px 16px; border-radius: 14px; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 18px;">👤</span>
+          <span style="font-weight: 800; font-size: 16px;">${escapeHtml(p.name)} ${p.id === gameState.myPlayerId ? ' <span style="color: var(--secondary); font-size: 13px;">(Вы)</span>' : ''}</span>
+        </div>
+        ${p.isHost ? '<span class="team-badge">👑 Хост</span>' : '<span class="setting-hint" style="color: var(--success);">🟢 В сети</span>'}
       </div>
     `).join('');
   }
 
   const startBtn = document.getElementById('btn-host-start-setup');
   if (startBtn) {
-    if (!gameState.isHost) {
-      startBtn.style.display = 'none';
-    } else {
-      startBtn.style.display = 'flex';
-    }
+    startBtn.style.display = gameState.isHost ? 'flex' : 'none';
   }
 }
 
@@ -148,7 +237,6 @@ function shareRoomLink() {
   const roomUrl = `https://derectim.github.io/slovo-v-shlyape/#room=${code}`;
   const shareText = `🎩 Сыграем в «Слово в шляпе»! Заходи в комнату по коду: ${code}\n${roomUrl}`;
 
-  // Нативное копирование и алерты
   fallbackCopy(shareText, code, roomUrl);
 }
 
@@ -176,7 +264,6 @@ function fallbackCopy(textToCopy, code, roomUrl) {
     document.body.removeChild(tempInput);
   }
 
-  // Вызов мобильного шеринга если доступен
   if (navigator.share && /mobile|android|iphone|ipad/i.test(navigator.userAgent)) {
     navigator.share({
       title: 'Слово в шляпе — Онлайн игра',
@@ -192,7 +279,6 @@ function fallbackCopy(textToCopy, code, roomUrl) {
   alert(`📋 Ссылка на комнату ${code} скопирована в буфер обмена!\n\nОтправьте её друзьям в чат Telegram или VK!`);
 }
 
-// Проверка входной ссылки с кодом комнаты (#room=7392 или ?room=7392)
 function checkUrlRoomCode() {
   let code = null;
   const hashMatch = window.location.hash.match(/room=([0-9]{4})/i);
@@ -271,24 +357,27 @@ function removeRawPlayer(idx) {
 
 // Перемешать простой список участников по парам
 function shuffleRawPairs() {
-  const valid = gameState.rawPlayerNames.map(n => n.trim()).filter(n => n.length > 0);
+  let valid = [];
+  if (gameState.playMode === 'online') {
+    valid = gameState.onlinePlayers.map(p => p.name.trim()).filter(n => n.length > 0);
+  } else {
+    valid = gameState.rawPlayerNames.map(n => n.trim()).filter(n => n.length > 0);
+  }
+
   if (valid.length < 4) {
     alert('Минимум 4 участника для игры командами!');
     return;
   }
 
-  // Если нечётное — добавим 1 игрока
   if (valid.length % 2 !== 0) {
     valid.push(`Игрок ${valid.length + 1}`);
   }
 
-  // Перемешивание Fisher-Yates
   for (let i = valid.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [valid[i], valid[j]] = [valid[j], valid[i]];
   }
 
-  // Формируем команды по 2 человека
   gameState.teams = [];
   for (let i = 0; i < valid.length; i += 2) {
     const teamNum = (i / 2) + 1;
@@ -300,7 +389,17 @@ function shuffleRawPairs() {
     });
   }
 
-  alert(`🎉 Участники успешно распределены на ${gameState.teams.length} пары!`);
+  if (gameState.playMode === 'online' && roomChannel && gameState.isHost) {
+    roomChannel.send({
+      type: 'broadcast',
+      event: 'start_game',
+      payload: {
+        teams: gameState.teams,
+        wordsPerPlayer: gameState.wordsPerPlayer,
+        turnSeconds: gameState.turnSeconds
+      }
+    });
+  }
 }
 
 // РЕЖИМ 2: РЕНДЕР РУЧНЫХ КОМАНД (ПО 2 ИГРОКА)
@@ -369,7 +468,7 @@ function removeTeam(tIdx) {
 // --------------------------------------------------------------------------
 
 function startWordEntry() {
-  if (gameState.currentMode === 'random') {
+  if (gameState.currentMode === 'random' && gameState.teams.length === 0) {
     shuffleRawPairs();
   }
 
@@ -383,20 +482,18 @@ function renderWordEntryPlayer() {
   const allPlayers = getAllPlayers();
   const player = allPlayers[gameState.wordEntryPlayerIndex];
   
-  // Progress
   const progressPercent = ((gameState.wordEntryPlayerIndex + 1) / allPlayers.length) * 100;
   document.getElementById('word-entry-progress').style.width = `${progressPercent}%`;
 
-  // Privacy Shield
-  document.getElementById('privacy-player-name').textContent = player.name;
+  document.getElementById('privacy-player-name').textContent = player ? player.name : 'Игрок';
   document.getElementById('privacy-shield').classList.remove('hidden');
   document.getElementById('words-form-container').classList.add('hidden');
 
-  // Form info
-  document.getElementById('entry-current-player-name').textContent = player.name;
-  document.getElementById('entry-current-team-name').textContent = player.teamName;
+  if (player) {
+    document.getElementById('entry-current-player-name').textContent = player.name;
+    document.getElementById('entry-current-team-name').textContent = player.teamName;
+  }
 
-  // Build input fields
   const inputsContainer = document.getElementById('word-inputs-list');
   inputsContainer.innerHTML = '';
 
@@ -434,7 +531,6 @@ function submitCurrentPlayerWords() {
     words.push(val);
   }
 
-  // Save words into cards pool
   words.forEach(word => {
     gameState.allCards.push({ id: Math.random().toString(36).substr(2, 9), word });
   });
@@ -444,7 +540,6 @@ function submitCurrentPlayerWords() {
     gameState.wordEntryPlayerIndex += 1;
     renderWordEntryPlayer();
   } else {
-    // Finish word entry -> Start Round 1
     startRound(0);
   }
 }
@@ -460,7 +555,6 @@ function startRound(roundIndex) {
     gameState.activeTeamIndex = 0;
   }
 
-  // Reset deck with shuffled cards from allCards pool
   gameState.deck = [...gameState.allCards].sort(() => Math.random() - 0.5);
 
   renderRoundIntro();
@@ -487,7 +581,6 @@ function renderRoundIntro() {
   document.getElementById('intro-explainer-name').textContent = `🗣 Объясняет: ${explainerName}`;
   document.getElementById('intro-guesser-name').textContent = `👂 Угадывает: ${guesserName}`;
 
-  // Mini Scoreboard
   const scoreList = document.getElementById('intro-scoreboard-list');
   scoreList.innerHTML = gameState.teams.map(t => {
     const total = t.roundScores.reduce((a, b) => a + b, 0);
@@ -501,7 +594,7 @@ function renderRoundIntro() {
 }
 
 // --------------------------------------------------------------------------
-// 4. ИГРОВОЙ ХОД И ИНТЕРАКТИВНЫЕ СВАЙПЫ (TURN SCREEN)
+// 4. ИГРОВОЙ ХОД И ИНТЕРАКТИВНЫЕ СВАЙПЫ
 // --------------------------------------------------------------------------
 
 function startTurn() {
@@ -540,14 +633,12 @@ function updateTurnUI() {
   document.getElementById('turn-cards-left').textContent = `В шляпе: ${currentLeft} из ${gameState.allCards.length}`;
   document.getElementById('turn-guessed-count').textContent = gameState.turnGuessedCount;
 
-  // Reset Card Transform
   resetCardTransform();
 }
 
 function handleCardGuess() {
   if (!gameState.currentCard) return;
 
-  // Add score to active team
   gameState.teams[gameState.activeTeamIndex].roundScores[gameState.currentRoundIndex] += 1;
   gameState.turnGuessedCount += 1;
 
@@ -567,7 +658,6 @@ function handleCardSkip() {
   const skippedCard = gameState.currentCard;
   gameState.currentCard = null;
 
-  // Re-insert into random position in deck
   if (gameState.deck.length === 0) {
     gameState.deck.push(skippedCard);
   } else {
@@ -591,7 +681,6 @@ function finishTurn(roundCompleted = false) {
   const activeTeam = gameState.teams[gameState.activeTeamIndex];
   activeTeam.explainerCursor += 1;
 
-  // Следующая команда по кругу
   gameState.activeTeamIndex = (gameState.activeTeamIndex + 1) % gameState.teams.length;
 
   if (roundCompleted) {
@@ -602,13 +691,12 @@ function finishTurn(roundCompleted = false) {
   }
 }
 
-// Таймер Хода
 function startTimer() {
   clearInterval(gameState.timerInterval);
   const timerWidget = document.querySelector('.timer-widget');
   const timerCircle = document.getElementById('timer-progress-circle');
   const timerText = document.getElementById('timer-text');
-  const totalCircleLen = 276.46; // 2 * PI * 44
+  const totalCircleLen = 276.46;
 
   if (timerWidget) timerWidget.classList.remove('warning', 'danger');
 
@@ -637,7 +725,7 @@ function startTimer() {
 }
 
 // --------------------------------------------------------------------------
-// 5. ЖЕСТЫ И СВАЙПЫ КАРТОЧКИ (GESTURE CONTROLLER)
+// 5. ЖЕСТЫ И СВАЙПЫ КАРТОЧКИ
 // --------------------------------------------------------------------------
 
 let cardElem, startX = 0, startY = 0, currentX = 0, currentY = 0, isDragging = false;
@@ -901,8 +989,7 @@ function initApp() {
   const btnHostStartSetup = document.getElementById('btn-host-start-setup');
   if (btnHostStartSetup) {
     btnHostStartSetup.addEventListener('click', () => {
-      switchSetupMode('random');
-      showScreen('screen-setup');
+      shuffleRawPairs();
     });
   }
 
