@@ -217,6 +217,22 @@ body {
   transform: scale(0.96);
 }
 
+.btn-sm {
+  padding: 8px 12px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+}
+
+.auto-balance-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.auto-balance-actions .btn-sm {
+  flex: 1;
+}
+
 .btn-primary {
   background: var(--primary);
   color: #FFF;

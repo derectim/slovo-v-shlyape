@@ -64,7 +64,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 1. НАСТРОЙКА ИГРЫ (SETUP SCREEN)
+// 1. НАСТРОЙКА ИГРЫ И АВТО-БАЛАНС КОМАНД (SETUP & AUTO-BALANCE)
 // --------------------------------------------------------------------------
 
 function renderSetupTeams() {
@@ -94,6 +94,47 @@ function renderSetupTeams() {
     `;
     container.appendChild(card);
   });
+}
+
+// Автоматическое равномерное распределение игроков по командам
+function autoBalanceTeams() {
+  const allNames = gameState.teams.flatMap(t => t.playerNames);
+  gameState.teams.forEach(t => t.playerNames = []);
+
+  allNames.forEach((name, idx) => {
+    const teamIdx = idx % gameState.teams.length;
+    gameState.teams[teamIdx].playerNames.push(name);
+  });
+
+  // В каждой команда должно быть хотя бы по 2 игрока
+  gameState.teams.forEach((team, idx) => {
+    while (team.playerNames.length < 2) {
+      const playerNum = gameState.teams.reduce((s, t) => s + t.playerNames.length, 0) + 1;
+      team.playerNames.push(`Игрок ${playerNum}`);
+    }
+  });
+
+  renderSetupTeams();
+}
+
+// Случайное перемешивание всех участников по командам
+function shufflePlayers() {
+  const allNames = gameState.teams.flatMap(t => t.playerNames).sort(() => Math.random() - 0.5);
+  gameState.teams.forEach(t => t.playerNames = []);
+
+  allNames.forEach((name, idx) => {
+    const teamIdx = idx % gameState.teams.length;
+    gameState.teams[teamIdx].playerNames.push(name);
+  });
+
+  gameState.teams.forEach((team) => {
+    while (team.playerNames.length < 2) {
+      const playerNum = gameState.teams.reduce((s, t) => s + t.playerNames.length, 0) + 1;
+      team.playerNames.push(`Игрок ${playerNum}`);
+    }
+  });
+
+  renderSetupTeams();
 }
 
 function escapeHtml(str) {
@@ -633,6 +674,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-close-rules').addEventListener('click', () => {
     document.getElementById('modal-rules').classList.add('hidden');
   });
+
+  document.getElementById('btn-auto-balance').addEventListener('click', autoBalanceTeams);
+  document.getElementById('btn-shuffle-players').addEventListener('click', shufflePlayers);
 
   // Steppers
   document.getElementById('btn-words-minus').addEventListener('click', () => {
