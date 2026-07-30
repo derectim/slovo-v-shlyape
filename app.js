@@ -148,30 +148,11 @@ function shareRoomLink() {
   const roomUrl = `https://derectim.github.io/slovo-v-shlyape/#room=${code}`;
   const shareText = `🎩 Сыграем в «Слово в шляпе»! Заходи в комнату по коду: ${code}\n${roomUrl}`;
 
-  // 1. Попытка использования VK Bridge (если в ВК)
-  if (window.vkBridge && typeof window.vkBridge.send === 'function') {
-    try {
-      window.vkBridge.send('VKWebAppShare', { link: roomUrl })
-        .then(data => { if (data && data.result) console.log('VK Share ok'); })
-        .catch(() => fallbackCopy(shareText, code));
-      return;
-    } catch (e) {}
-  }
-
-  // 2. Попытка нативного шеринга на смартфонах
-  if (navigator.share && /mobile|android|iphone|ipad/i.test(navigator.userAgent)) {
-    navigator.share({
-      title: 'Слово в шляпе — Онлайн игра',
-      text: `Сыграем в «Слово в шляпе»! Заходи в комнату по коду: ${code}`,
-      url: roomUrl
-    }).catch(() => fallbackCopy(shareText, code));
-  } else {
-    // 3. Надежный Фолбэк для ПК и любых браузеров
-    fallbackCopy(shareText, code);
-  }
+  // Нативное копирование и алерты
+  fallbackCopy(shareText, code, roomUrl);
 }
 
-function fallbackCopy(textToCopy, code) {
+function fallbackCopy(textToCopy, code, roomUrl) {
   let success = false;
   try {
     if (navigator.clipboard && window.isSecureContext) {
@@ -195,7 +176,20 @@ function fallbackCopy(textToCopy, code) {
     document.body.removeChild(tempInput);
   }
 
-  alert(`📋 Ссылка и код комнаты ${code} скопированы в буфер обмена!\n\nОтправьте её друзьям в чат Telegram или VK!`);
+  // Вызов мобильного шеринга если доступен
+  if (navigator.share && /mobile|android|iphone|ipad/i.test(navigator.userAgent)) {
+    navigator.share({
+      title: 'Слово в шляпе — Онлайн игра',
+      text: `Сыграем в «Слово в шляпе»! Заходи в комнату по коду: ${code}`,
+      url: roomUrl
+    }).catch(() => {});
+  } else if (window.vkBridge && typeof window.vkBridge.send === 'function') {
+    try {
+      window.vkBridge.send('VKWebAppShare', { link: roomUrl }).catch(() => {});
+    } catch (e) {}
+  }
+
+  alert(`📋 Ссылка на комнату ${code} скопирована в буфер обмена!\n\nОтправьте её друзьям в чат Telegram или VK!`);
 }
 
 // Проверка входной ссылки с кодом комнаты (#room=7392 или ?room=7392)
