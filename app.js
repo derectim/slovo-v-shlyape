@@ -230,7 +230,7 @@ function switchSetupMode(mode) {
     tabManual.classList.add('active');
     tabRandom.classList.remove('active');
     viewManual.classList.remove('hidden');
-    viewManual.classList.add('hidden');
+    viewRandom.classList.add('hidden');
     renderManualTeams();
   }
 }

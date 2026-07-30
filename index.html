@@ -11,11 +11,11 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <!-- Supabase Realtime JS SDK (Robust WebSocket for Russia/CIS) -->
+  <!-- Supabase Realtime JS SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
   <!-- Local VK Bridge Bundle -->
-  <script src="vk-bridge.js?v=2.1.0"></script>
+  <script src="vk-bridge.js?v=2.1.1"></script>
   <script>
     (function initVK() {
       function sendVKInit() {
@@ -37,7 +37,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=2.1.0">
+  <link rel="stylesheet" href="styles.css?v=2.1.1">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -77,18 +77,23 @@
 
       <div class="screen-content center-content">
         <div class="section-card" style="width: 100%;">
-          <h3>Создать комнату</h3>
-          <p class="section-desc">Вы станете хостом, получите 4-значный код и сможете отправить ссылку друзьям в VK или Telegram.</p>
+          <h3>Ваше имя в игре</h3>
+          <input type="text" id="input-online-player-name" class="input-field" placeholder="Введите ваше имя" style="font-size: 16px; font-weight: 700;">
+        </div>
+
+        <div class="section-card" style="width: 100%;">
+          <h3>Создать новую комнату</h3>
+          <p class="section-desc">Вы станете хостом, получите 4-значный код и отправьте ссылку друзьям.</p>
           <button id="btn-create-online-room" class="btn btn-primary btn-full glow-effect">
-            <span>✨</span> Создать новую комнату
+            <span>✨</span> Создать комнату
           </button>
         </div>
 
         <div class="section-card" style="width: 100%;">
           <h3>Войти по коду</h3>
-          <p class="section-desc">Введите 4-значный код комнаты, который вам прислал организатор партии.</p>
+          <p class="section-desc">Введите 4-значный код комнаты от организатора.</p>
           <div style="display: flex; gap: 8px;">
-            <input type="text" id="input-room-code-join" class="input-field" placeholder="Например: 7392" maxlength="4" style="text-align: center; font-size: 20px; font-weight: 800; letter-spacing: 4px; text-transform: uppercase;">
+            <input type="text" id="input-room-code-join" class="input-field" placeholder="Код: 7392" maxlength="4" style="text-align: center; font-size: 20px; font-weight: 800; letter-spacing: 4px; text-transform: uppercase;">
             <button id="btn-join-room-action" class="btn btn-success glow-success" style="white-space: nowrap;">
               Войти ➔
             </button>
@@ -118,8 +123,8 @@
         </div>
 
         <div class="section-card">
-          <h3>Участники в комнате (<span id="lobby-players-count">1</span>)</h3>
-          <p class="section-desc">Все подключившиеся игроки отображаются в реальном времени:</p>
+          <h3>Подключённые игроки (<span id="lobby-players-count">1</span>)</h3>
+          <p class="section-desc">Каждый игрок видит свой ник. Хост автоматически перемешает всех по парам по 2 человека.</p>
           <div id="lobby-players-list" class="players-input-list">
             <!-- Dynamic players list in lobby -->
           </div>
@@ -128,7 +133,7 @@
 
       <footer class="screen-footer">
         <button id="btn-host-start-setup" class="btn btn-primary btn-large btn-full glow-effect">
-          Настроить команды и начать ➔
+          🎲 Перемешать по парам и начать ➔
         </button>
       </footer>
     </section>
@@ -406,7 +411,7 @@
         <div class="rule-item">
           <div class="rule-num">3</div>
           <div class="rule-text">
-            <strong>Раунд 2: Пантомима</strong>
+            <strong>Раунд 3: Пантомима</strong>
             <p>Показывайте те же слова жестами и мимикой без звуков.</p>
           </div>
         </div>
@@ -421,6 +426,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.1.0"></script>
+  <script src="app.js?v=2.1.1"></script>
 </body>
 </html>
