@@ -2,6 +2,15 @@
  * «Слово в шляпе» — Полная логика веб-игры с анимированными свайпами, таймером и конфетти.
  */
 
+// Инициализация VK Bridge для ВК Mini Apps
+if (window.vkBridge) {
+  try {
+    window.vkBridge.send('VKWebAppInit');
+  } catch (e) {
+    console.log('VK Bridge init skipped');
+  }
+}
+
 // Игровые Константы Раундов
 const ROUNDS = [
   {
