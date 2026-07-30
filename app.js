@@ -5,7 +5,7 @@
 // Инициализация VK Bridge для ВК Mini Apps
 if (window.vkBridge) {
   try {
-    window.vkBridge.send('VKWebAppInit');
+    window.vkBridge.send('VKWebAppInit', {});
   } catch (e) {
     console.log('VK Bridge init skipped');
   }
@@ -317,12 +317,16 @@ function submitCurrentPlayerWords() {
 }
 
 // --------------------------------------------------------------------------
-// 3. УПРАВЛЕНИЕ РАУНДАМИ
+// 3. УПРАВЛЕНИЕ РАУНДАМИ И СКОВОЗНАЯ ОЧЕРЕДЬ КОМАНД
 // --------------------------------------------------------------------------
 
 function startRound(roundIndex) {
   gameState.currentRoundIndex = roundIndex;
-  gameState.activeTeamIndex = 0;
+  
+  // В Раунде 1 начинаем с Команды 1, а в Раундах 2 и 3 очередь сохраняется по кругу!
+  if (roundIndex === 0) {
+    gameState.activeTeamIndex = 0;
+  }
 
   // Reset deck with shuffled cards from allCards pool
   gameState.deck = [...gameState.allCards].sort(() => Math.random() - 0.5);
@@ -444,7 +448,7 @@ function finishTurn(roundCompleted = false) {
   const activeTeam = gameState.teams[gameState.activeTeamIndex];
   activeTeam.explainerCursor += 1;
 
-  // Next team turn
+  // Next team turn in cyclic queue
   gameState.activeTeamIndex = (gameState.activeTeamIndex + 1) % gameState.teams.length;
 
   if (roundCompleted) {
