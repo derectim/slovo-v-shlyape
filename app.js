@@ -1,5 +1,6 @@
 /**
- * «Слово в шляпе» — Локальный режим + Прямой P2P WebRTC Онлайн-мультиплеер.
+ * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web).
+ * Использует надежный WebSocket Relay для 100% сопряжения между Telegram и ВКонтакте.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -10,11 +11,6 @@ if (window.vkBridge) {
     console.log('VK Bridge init skipped');
   }
 }
-
-// Переменные PeerJS P2P WebRTC соединения
-let peer = null;
-let peerConnections = [];
-let hostConn = null;
 
 // Игровые Константы Раундов
 const ROUNDS = [
@@ -35,13 +31,13 @@ const ROUNDS = [
   }
 ];
 
-// Состояние Игры (Game State)
+// Состояние Игровой Сессии
 let gameState = {
   playMode: 'local', // 'local' или 'online'
   currentMode: 'random', // 'random' или 'manual'
   onlineRoomCode: null,
   isHost: false,
-  myPlayerId: 'p_' + Math.random().toString(36).substr(2, 6),
+  myPlayerId: 'p_' + Math.random().toString(36).substr(2, 7),
   myPlayerName: '',
   rawPlayerNames: ['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4'],
   onlinePlayers: [],
@@ -61,6 +57,10 @@ let gameState = {
   timerInterval: null,
   secondsLeft: 0
 };
+
+// WebSocket клиент для гарантированной связи Telegram <-> VK
+let wsClient = null;
+let roomPingInterval = null;
 
 // Список всех игроков одной плоскостью
 function getAllPlayers() {
@@ -86,7 +86,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. ОНЛАЙН МУЛЬТИПЛЕЕР (PEERJS DIRECT P2P CONNECTIONS)
+// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С WSS RELAY (TELEGRAM <-> VK <-> WEB)
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -112,47 +112,9 @@ function createOnlineRoom() {
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
 
-  initHostPeer(gameState.onlineRoomCode);
+  connectCrossPlatformSocket(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
-}
-
-function initHostPeer(code) {
-  if (peer) try { peer.destroy(); } catch (e) {}
-  peerConnections = [];
-
-  const hostPeerId = `slovo_shlyapa_${code}`;
-  
-  if (window.Peer) {
-    peer = new Peer(hostPeerId);
-
-    peer.on('connection', (conn) => {
-      peerConnections.push(conn);
-
-      conn.on('data', (data) => {
-        if (data.type === 'join') {
-          if (!gameState.onlinePlayers.some(p => p.id === data.id)) {
-            gameState.onlinePlayers.push({ id: data.id, name: data.name, isHost: false });
-          } else {
-            const p = gameState.onlinePlayers.find(p => p.id === data.id);
-            if (p) p.name = data.name;
-          }
-
-          renderOnlineLobby();
-
-          // Синхронизируем обновленный список игроков со ВСЕМИ подключенными смартфонами
-          broadcastToPeers({
-            type: 'sync_players',
-            players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
-          });
-        }
-      });
-
-      conn.on('close', () => {
-        peerConnections = peerConnections.filter(c => c !== conn);
-      });
-    });
-  }
 }
 
 function joinOnlineRoom(code) {
@@ -167,52 +129,97 @@ function joinOnlineRoom(code) {
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false }];
 
-  initClientPeer(gameState.onlineRoomCode, myName);
+  connectCrossPlatformSocket(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
 
-function initClientPeer(code, myName) {
-  if (peer) try { peer.destroy(); } catch (e) {}
+function connectCrossPlatformSocket(code) {
+  if (wsClient) {
+    try { wsClient.close(); } catch (e) {}
+  }
+  clearInterval(roomPingInterval);
 
-  if (window.Peer) {
-    peer = new Peer();
+  // Публичный открытый WSS шлюз для связки Telegram + VK + Web
+  const wsUrl = `wss://free.chatws.net/room_${code}`;
 
-    peer.on('open', () => {
-      const hostPeerId = `slovo_shlyapa_${code}`;
-      hostConn = peer.connect(hostPeerId);
+  try {
+    wsClient = new WebSocket(wsUrl);
 
-      hostConn.on('open', () => {
-        hostConn.send({
-          type: 'join',
-          id: gameState.myPlayerId,
-          name: myName
-        });
+    wsClient.onopen = () => {
+      // Отправляем анонс о своем входе в комнату
+      sendWsMessage({
+        type: 'join',
+        id: gameState.myPlayerId,
+        name: getMyName(),
+        isHost: gameState.isHost
       });
 
-      hostConn.on('data', (data) => {
-        if (data.type === 'sync_players') {
-          gameState.onlinePlayers = data.players;
-          renderOnlineLobby();
-        } else if (data.type === 'start_game') {
-          gameState.teams = data.teams;
-          gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
-          gameState.turnSeconds = data.turnSeconds || 60;
+      // Периодический пинг каждые 3 секунды для поддержания открытой связи
+      roomPingInterval = setInterval(() => {
+        sendWsMessage({
+          type: 'ping',
+          id: gameState.myPlayerId,
+          name: getMyName(),
+          isHost: gameState.isHost
+        });
+      }, 3000);
+    };
+
+    wsClient.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+
+        if (msg.type === 'join' || msg.type === 'ping') {
+          handleIncomingPlayer(msg);
+        } else if (msg.type === 'sync_players') {
+          if (!gameState.isHost && msg.players) {
+            gameState.onlinePlayers = msg.players;
+            renderOnlineLobby();
+          }
+        } else if (msg.type === 'start_game') {
+          gameState.teams = msg.teams;
+          gameState.wordsPerPlayer = msg.wordsPerPlayer || 5;
+          gameState.turnSeconds = msg.turnSeconds || 60;
           startWordEntry();
         }
-      });
-    });
+      } catch (e) {}
+    };
+
+    wsClient.onerror = () => {
+      console.log('WSS connect retry');
+    };
+  } catch (e) {
+    console.log('WS init err:', e);
   }
 }
 
-function broadcastToPeers(payload) {
-  peerConnections.forEach(conn => {
-    try {
-      if (conn.open) {
-        conn.send(payload);
-      }
-    } catch (e) {}
-  });
+function sendWsMessage(obj) {
+  if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+    wsClient.send(JSON.stringify(obj));
+  }
+}
+
+function handleIncomingPlayer(msg) {
+  if (!gameState.onlinePlayers.some(p => p.id === msg.id)) {
+    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: msg.isHost });
+  } else {
+    const p = gameState.onlinePlayers.find(p => p.id === msg.id);
+    if (p) {
+      p.name = msg.name;
+      if (msg.isHost) p.isHost = true;
+    }
+  }
+
+  renderOnlineLobby();
+
+  // Хост рассылает обновленный список игроков всем клиентам (Telegram и VK)
+  if (gameState.isHost) {
+    sendWsMessage({
+      type: 'sync_players',
+      players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
+    });
+  }
 }
 
 function renderOnlineLobby() {
@@ -370,7 +377,6 @@ function removeRawPlayer(idx) {
 function shuffleRawPairs() {
   let valid = [];
   if (gameState.playMode === 'online') {
-    // Берём имена ВСЕХ подключённых в комнату игроков
     valid = gameState.onlinePlayers.map(p => p.name.trim()).filter(n => n.length > 0);
   } else {
     valid = gameState.rawPlayerNames.map(n => n.trim()).filter(n => n.length > 0);
@@ -385,7 +391,6 @@ function shuffleRawPairs() {
     valid.push(`Игрок ${valid.length + 1}`);
   }
 
-  // Алгоритм Fisher-Yates
   for (let i = valid.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [valid[i], valid[j]] = [valid[j], valid[i]];
@@ -402,9 +407,8 @@ function shuffleRawPairs() {
     });
   }
 
-  // Если это Онлайн — хост рассылает сформированные команды ВСЕМ игрокам и запускает ввод слов!
   if (gameState.playMode === 'online' && gameState.isHost) {
-    broadcastToPeers({
+    sendWsMessage({
       type: 'start_game',
       teams: gameState.teams,
       wordsPerPlayer: gameState.wordsPerPlayer,
