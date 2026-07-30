@@ -11,27 +11,23 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <!-- VK Bridge SDK for VK Mini Apps & Direct Handshake -->
-  <script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser/vk-bridge.js"></script>
+  <!-- Local VK Bridge Bundle for 100% Reliable Execution -->
+  <script src="vk-bridge.js?v=2.0.8"></script>
   <script>
-    (function() {
-      function sendInit() {
+    (function initVK() {
+      function sendVKInit() {
         try {
-          if (window.vkBridge) {
-            window.vkBridge.send('VKWebAppInit', {});
+          var bridge = window.vkBridge ? (window.vkBridge.default || window.vkBridge) : null;
+          if (bridge && typeof bridge.send === 'function') {
+            bridge.send('VKWebAppInit', {});
           }
-        } catch (e) {}
-        try {
-          if (window.parent && window.parent !== window) {
-            window.parent.postMessage(JSON.stringify({ type: 'VKWebAppInit' }), '*');
-            window.parent.postMessage(JSON.stringify({ type: 'VKWebAppInitResult', data: { status: true } }), '*');
-          }
-        } catch (e) {}
+        } catch (e) {
+          console.log('VK Init err:', e);
+        }
       }
-
-      sendInit();
-      window.addEventListener('DOMContentLoaded', sendInit);
-      window.addEventListener('load', sendInit);
+      sendVKInit();
+      window.addEventListener('DOMContentLoaded', sendVKInit);
+      window.addEventListener('load', sendVKInit);
     })();
   </script>
 
@@ -40,7 +36,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=2.0.7">
+  <link rel="stylesheet" href="styles.css?v=2.0.8">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -352,6 +348,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.7"></script>
+  <script src="app.js?v=2.0.8"></script>
 </body>
 </html>
