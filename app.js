@@ -33,6 +33,29 @@ const MULTIPLAYER_SERVER_URL = window.__GAME_WS_URL__
     ? 'ws://127.0.0.1:8787'
     : 'wss://young-forest-dcd5.derectim50.workers.dev');
 
+const launchParams = new URLSearchParams(window.location.search);
+const vkPlatform = (launchParams.get('vk_platform') || '').toLowerCase();
+const isVkMiniApp = launchParams.has('vk_app_id') || launchParams.has('vk_platform');
+const isCoarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+const isVkMobile = isVkMiniApp && (
+  /mobile|iphone|android/.test(vkPlatform) || isCoarsePointer
+);
+
+function configurePlatformExperience() {
+  document.documentElement.classList.toggle('vk-mobile', Boolean(isVkMobile));
+
+  if (!isVkMobile || !window.vkBridge) return;
+  const bridge = window.vkBridge.default || window.vkBridge;
+  if (!bridge || typeof bridge.send !== 'function') return;
+
+  try {
+    Promise.resolve(bridge.send('VKWebAppDisableSwipeBack')).catch(() => {});
+  } catch (error) {
+    // Старые версии VK могут не поддерживать команду. CSS и блокировка
+    // touch-событий ниже всё равно не дадут карточке вызвать жест «назад».
+  }
+}
+
 // Игровые Константы Раундов
 const ROUNDS = [
   {
@@ -1052,6 +1075,8 @@ function renderTurnScreen(canControl) {
   const arena = document.querySelector('#screen-turn .card-arena');
   const actions = document.querySelector('#screen-turn .turn-actions');
   const observer = document.getElementById('turn-observer-message');
+  const turnScreen = document.getElementById('screen-turn');
+  if (turnScreen) turnScreen.classList.toggle('observer-mode', !canControl);
   if (arena) arena.classList.toggle('is-hidden', !canControl);
   if (actions) actions.classList.toggle('is-hidden', !canControl);
   if (observer) observer.classList.toggle('is-hidden', canControl);
@@ -1277,7 +1302,7 @@ function startTimer() {
   if (gameState.playMode === 'online') {
     gameState.secondsLeft = Math.max(0, Math.ceil((onlineTurnDeadline - Date.now()) / 1000));
     if (timerText) timerText.textContent = gameState.secondsLeft;
-    gameState.timerInterval = setInterval(renderTimer, 250);
+    gameState.timerInterval = setInterval(renderTimer, 1000);
   } else {
     gameState.timerInterval = setInterval(renderTimer, 1000);
   }
@@ -1292,6 +1317,18 @@ let cardElem, startX = 0, startY = 0, currentX = 0, currentY = 0, isDragging = f
 function initSwipeCard() {
   cardElem = document.getElementById('swipe-card');
   if (!cardElem) return;
+
+  if (isVkMobile) {
+    cardElem.classList.add('swipe-disabled');
+    const hint = cardElem.querySelector('.card-hint-text');
+    if (hint) hint.textContent = 'Используйте кнопки «Пропустить» и «Угадано» ниже';
+    const blockVkSwipeBack = event => {
+      if (event.cancelable) event.preventDefault();
+    };
+    cardElem.addEventListener('touchstart', blockVkSwipeBack, { passive: false });
+    cardElem.addEventListener('touchmove', blockVkSwipeBack, { passive: false });
+    return;
+  }
 
   cardElem.addEventListener('touchstart', handleDragStart, { passive: true });
   cardElem.addEventListener('touchmove', handleDragMove, { passive: false });
@@ -1503,6 +1540,8 @@ function triggerConfetti() {
 // --------------------------------------------------------------------------
 
 function initApp() {
+  configurePlatformExperience();
+
   // Main screen Mode Selection
   const btnLocal = document.getElementById('btn-mode-local');
   if (btnLocal) {
