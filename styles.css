@@ -161,6 +161,12 @@ body {
   font-size: 58px;
 }
 
+.dice-icon {
+  font-size: 64px;
+  margin-bottom: 12px;
+  animation: float 3s ease-in-out infinite;
+}
+
 @keyframes float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-10px); }
@@ -215,22 +221,6 @@ body {
 
 .btn:active {
   transform: scale(0.96);
-}
-
-.btn-sm {
-  padding: 8px 12px;
-  font-size: 12px;
-  border-radius: var(--radius-sm);
-}
-
-.auto-balance-actions {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.auto-balance-actions .btn-sm {
-  flex: 1;
 }
 
 .btn-primary {
@@ -293,7 +283,7 @@ body {
   width: 100%;
 }
 
-/* Setup Cards */
+/* Setup Cards & Players Input List */
 .section-card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
@@ -315,25 +305,9 @@ body {
   color: var(--text-muted);
 }
 
-.teams-list {
+.players-input-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-}
-
-.team-card {
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-md);
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.team-header {
-  display: flex;
-  align-items: center;
   gap: 10px;
 }
 
@@ -352,18 +326,6 @@ body {
 
 .input-field:focus {
   border-color: var(--primary);
-}
-
-.input-team-name {
-  font-weight: 700;
-  font-size: 16px;
-}
-
-.players-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-left: 8px;
 }
 
 .player-row {
@@ -386,15 +348,35 @@ body {
   color: var(--error);
 }
 
-.btn-add-player {
-  background: none;
-  border: none;
+/* Generated Teams Preview List */
+.generated-teams-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  margin-bottom: 24px;
+}
+
+.pair-team-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pair-team-name {
+  font-size: 18px;
+  font-weight: 800;
   color: var(--secondary);
-  font-size: 13px;
+}
+
+.pair-players {
+  font-size: 15px;
   font-weight: 700;
-  cursor: pointer;
-  align-self: flex-start;
-  padding: 4px 0;
 }
 
 /* Stepper Settings */

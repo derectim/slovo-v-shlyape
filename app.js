@@ -23,10 +23,8 @@ const ROUNDS = [
 
 // Состояние Игры (Game State)
 let gameState = {
-  teams: [
-    { name: 'Команда 1', playerNames: ['Игрок 1', 'Игрок 2'], roundScores: [0, 0, 0], explainerCursor: 0 },
-    { name: 'Команда 2', playerNames: ['Игрок 3', 'Игрок 4'], roundScores: [0, 0, 0], explainerCursor: 0 }
-  ],
+  rawPlayerNames: ['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4'],
+  teams: [],
   wordsPerPlayer: 5,
   turnSeconds: 60,
   allCards: [],
@@ -64,122 +62,89 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 1. НАСТРОЙКА ИГРЫ И АВТО-БАЛАНС КОМАНД (SETUP & AUTO-BALANCE)
+// 1. СБОР ИМЁН И СЛУЧАЙНЫЙ РАЗБРОС НА ПАРЫ (PLAYERS & PAIR TEAMS)
 // --------------------------------------------------------------------------
 
-function renderSetupTeams() {
-  const container = document.getElementById('teams-container');
+function renderSetupPlayers() {
+  const container = document.getElementById('players-input-list');
   container.innerHTML = '';
 
-  gameState.teams.forEach((team, tIdx) => {
-    const card = document.createElement('div');
-    card.className = 'team-card';
-
-    let playersHtml = team.playerNames.map((pName, pIdx) => `
-      <div class="player-row">
-        <input type="text" class="input-field" value="${escapeHtml(pName)}" onchange="updatePlayerName(${tIdx}, ${pIdx}, this.value)">
-        ${team.playerNames.length > 2 ? `<button class="btn-icon-only" onclick="removePlayer(${tIdx}, ${pIdx})">✕</button>` : ''}
-      </div>
-    `).join('');
-
-    card.innerHTML = `
-      <div class="team-header">
-        <input type="text" class="input-field input-team-name" value="${escapeHtml(team.name)}" onchange="updateTeamName(${tIdx}, this.value)">
-        ${gameState.teams.length > 2 ? `<button class="btn-icon-only" onclick="removeTeam(${tIdx})">🗑</button>` : ''}
-      </div>
-      <div class="players-list">
-        ${playersHtml}
-        <button class="btn-add-player" onclick="addPlayer(${tIdx})">+ Добавить игрока</button>
-      </div>
+  gameState.rawPlayerNames.forEach((name, idx) => {
+    const row = document.createElement('div');
+    row.className = 'player-row';
+    row.innerHTML = `
+      <input type="text" class="input-field player-name-input" value="${escapeHtml(name)}" onchange="updateRawPlayerName(${idx}, this.value)">
+      ${gameState.rawPlayerNames.length > 4 ? `<button class="btn-icon-only" onclick="removePlayerField(${idx})">✕</button>` : ''}
     `;
-    container.appendChild(card);
+    container.appendChild(row);
   });
 }
 
-// Автоматическое равномерное распределение игроков по командам
-function autoBalanceTeams() {
-  const allNames = gameState.teams.flatMap(t => t.playerNames);
-  gameState.teams.forEach(t => t.playerNames = []);
-
-  allNames.forEach((name, idx) => {
-    const teamIdx = idx % gameState.teams.length;
-    gameState.teams[teamIdx].playerNames.push(name);
-  });
-
-  // В каждой команда должно быть хотя бы по 2 игрока
-  gameState.teams.forEach((team, idx) => {
-    while (team.playerNames.length < 2) {
-      const playerNum = gameState.teams.reduce((s, t) => s + t.playerNames.length, 0) + 1;
-      team.playerNames.push(`Игрок ${playerNum}`);
-    }
-  });
-
-  renderSetupTeams();
+function updateRawPlayerName(idx, value) {
+  if (value.trim()) gameState.rawPlayerNames[idx] = value.trim();
 }
 
-// Случайное перемешивание всех участников по командам
-function shufflePlayers() {
-  const allNames = gameState.teams.flatMap(t => t.playerNames).sort(() => Math.random() - 0.5);
-  gameState.teams.forEach(t => t.playerNames = []);
+function addPlayerField() {
+  const num = gameState.rawPlayerNames.length + 1;
+  gameState.rawPlayerNames.push(`Игрок ${num}`);
+  renderSetupPlayers();
+}
 
-  allNames.forEach((name, idx) => {
-    const teamIdx = idx % gameState.teams.length;
-    gameState.teams[teamIdx].playerNames.push(name);
-  });
+function removePlayerField(idx) {
+  if (gameState.rawPlayerNames.length > 4) {
+    gameState.rawPlayerNames.splice(idx, 1);
+    renderSetupPlayers();
+  }
+}
 
-  gameState.teams.forEach((team) => {
-    while (team.playerNames.length < 2) {
-      const playerNum = gameState.teams.reduce((s, t) => s + t.playerNames.length, 0) + 1;
-      team.playerNames.push(`Игрок ${playerNum}`);
-    }
-  });
+// Генерация рандомных команд ровно по 2 человека
+function generateRandomPairTeams() {
+  const validNames = gameState.rawPlayerNames.map(n => n.trim()).filter(n => n.length > 0);
 
-  renderSetupTeams();
+  if (validNames.length < 4) {
+    alert('Минимум 4 участника для игры командами по 2 человека!');
+    return;
+  }
+
+  // Если нечетное количество — добавляем 1 имя для парности
+  if (validNames.length % 2 !== 0) {
+    validNames.push(`Игрок ${validNames.length + 1}`);
+  }
+
+  // Случайное перемешивание (Fisher-Yates Shuffle)
+  for (let i = validNames.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [validNames[i], validNames[j]] = [validNames[j], validNames[i]];
+  }
+
+  // Формируем команды по 2 человека
+  gameState.teams = [];
+  for (let i = 0; i < validNames.length; i += 2) {
+    const teamNum = (i / 2) + 1;
+    gameState.teams.push({
+      name: `Команда ${teamNum}`,
+      playerNames: [validNames[i], validNames[i + 1]],
+      roundScores: [0, 0, 0],
+      explainerCursor: 0
+    });
+  }
+
+  renderTeamsPreview();
+  showScreen('screen-teams-preview');
+}
+
+function renderTeamsPreview() {
+  const container = document.getElementById('generated-teams-list');
+  container.innerHTML = gameState.teams.map(team => `
+    <div class="pair-team-card">
+      <span class="pair-team-name">${escapeHtml(team.name)}</span>
+      <span class="pair-players">🤝 ${escapeHtml(team.playerNames[0])} и ${escapeHtml(team.playerNames[1])}</span>
+    </div>
+  `).join('');
 }
 
 function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function updateTeamName(tIdx, name) {
-  if (name.trim()) gameState.teams[tIdx].name = name.trim();
-}
-
-function updatePlayerName(tIdx, pIdx, name) {
-  if (name.trim()) gameState.teams[tIdx].playerNames[pIdx] = name.trim();
-}
-
-function addPlayer(tIdx) {
-  const count = gameState.teams[tIdx].playerNames.length + 1;
-  gameState.teams[tIdx].playerNames.push(`Игрок ${count}`);
-  renderSetupTeams();
-}
-
-function removePlayer(tIdx, pIdx) {
-  if (gameState.teams[tIdx].playerNames.length > 2) {
-    gameState.teams[tIdx].playerNames.splice(pIdx, 1);
-    renderSetupTeams();
-  }
-}
-
-function addTeam() {
-  if (gameState.teams.length < 6) {
-    const num = gameState.teams.length + 1;
-    gameState.teams.push({
-      name: `Команда ${num}`,
-      playerNames: [`Игрок ${num * 2 - 1}`, `Игрок ${num * 2}`],
-      roundScores: [0, 0, 0],
-      explainerCursor: 0
-    });
-    renderSetupTeams();
-  }
-}
-
-function removeTeam(tIdx) {
-  if (gameState.teams.length > 2) {
-    gameState.teams.splice(tIdx, 1);
-    renderSetupTeams();
-  }
 }
 
 // --------------------------------------------------------------------------
@@ -659,7 +624,7 @@ function triggerConfetti() {
 document.addEventListener('DOMContentLoaded', () => {
   // Navigation & Buttons
   document.getElementById('btn-start-game').addEventListener('click', () => {
-    renderSetupTeams();
+    renderSetupPlayers();
     showScreen('screen-setup');
   });
 
@@ -675,8 +640,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('modal-rules').classList.add('hidden');
   });
 
-  document.getElementById('btn-auto-balance').addEventListener('click', autoBalanceTeams);
-  document.getElementById('btn-shuffle-players').addEventListener('click', shufflePlayers);
+  document.getElementById('btn-add-player-field').addEventListener('click', addPlayerField);
+
+  document.getElementById('btn-generate-teams').addEventListener('click', generateRandomPairTeams);
+  document.getElementById('btn-confirm-teams').addEventListener('click', startWordEntry);
 
   // Steppers
   document.getElementById('btn-words-minus').addEventListener('click', () => {
@@ -705,12 +672,6 @@ document.addEventListener('DOMContentLoaded', () => {
       gameState.turnSeconds += 15;
       document.getElementById('val-timer-sec').textContent = `${gameState.turnSeconds} с`;
     }
-  });
-
-  document.getElementById('btn-add-team').addEventListener('click', addTeam);
-
-  document.getElementById('btn-proceed-words').addEventListener('click', () => {
-    startWordEntry();
   });
 
   document.getElementById('btn-reveal-entry').addEventListener('click', revealWordEntryForm);
