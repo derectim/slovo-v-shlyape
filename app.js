@@ -1,5 +1,6 @@
 /**
  * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
+ * Использование двойного сетевого шлюза PieSocket + Supabase с авто-синхронизацией каждые 1.5с.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -36,7 +37,7 @@ let gameState = {
   currentMode: 'random', // 'random' или 'manual'
   onlineRoomCode: null,
   isHost: false,
-  myPlayerId: 'p_' + Math.random().toString(36).substr(2, 7) + '_' + Date.now().toString(36),
+  myPlayerId: 'p_' + Math.random().toString(36).substr(2, 7) + '_' + Math.floor(Math.random()*1000),
   myPlayerName: '',
   rawPlayerNames: ['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4'],
   onlinePlayers: [],
@@ -57,9 +58,9 @@ let gameState = {
   secondsLeft: 0
 };
 
-// WebSocket клиент
+// WebSocket переменные
 let wsClient = null;
-let roomPingInterval = null;
+let roomHeartbeatInterval = null;
 
 // Список всех игроков одной плоскостью
 function getAllPlayers() {
@@ -85,7 +86,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С WSS RELAY (TELEGRAM <-> VK <-> WEB)
+// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С WSS RELAY И АВТО-СИНХРОНИЗАЦИЕЙ (1.5с)
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -109,7 +110,7 @@ function createOnlineRoom() {
   gameState.onlineRoomCode = generateRoomCode();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true, lastActive: Date.now() }];
 
   connectCrossPlatformSocket(gameState.onlineRoomCode);
   renderOnlineLobby();
@@ -126,7 +127,7 @@ function joinOnlineRoom(code) {
   gameState.onlineRoomCode = code.toUpperCase();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false, lastActive: Date.now() }];
 
   connectCrossPlatformSocket(gameState.onlineRoomCode);
   renderOnlineLobby();
@@ -137,15 +138,17 @@ function connectCrossPlatformSocket(code) {
   if (wsClient) {
     try { wsClient.close(); } catch (e) {}
   }
-  clearInterval(roomPingInterval);
+  clearInterval(roomHeartbeatInterval);
 
-  const wsUrl = `wss://free.chatws.net/shlyapa_room_${code}`;
+  // Используем высокоскоростной открытый глобальный WSS брокер
+  const apiKey = 'VCXSpRHDAAbWuZWwu9FGkuQLnvLEHJ7Zosg9wVbx';
+  const wsUrl = `wss://demo.piesocket.com/v3/shlyapa_room_${code}?api_key=${apiKey}&notify_self=1`;
 
   try {
     wsClient = new WebSocket(wsUrl);
 
     wsClient.onopen = () => {
-      // 1. Анонсируем себя
+      // Отправляем анонс о своем присутствии
       sendWsMessage({
         type: 'join',
         id: gameState.myPlayerId,
@@ -153,35 +156,36 @@ function connectCrossPlatformSocket(code) {
         isHost: gameState.isHost
       });
 
-      // 2. Запрашиваем синхронизацию текущего состояния комнаты от хоста
-      sendWsMessage({
-        type: 'request_sync',
-        id: gameState.myPlayerId
-      });
-
-      // 3. Пинг каждые 2 секунды для поддержания активности
-      roomPingInterval = setInterval(() => {
+      // Непрерывный пульс каждые 1.5 секунды
+      roomHeartbeatInterval = setInterval(() => {
         sendWsMessage({
-          type: 'ping',
+          type: 'heartbeat',
           id: gameState.myPlayerId,
           name: getMyName(),
           isHost: gameState.isHost
         });
-      }, 2000);
+
+        // Очищаем устаревших игроков если не отвечали 10 секунд
+        if (gameState.isHost) {
+          const now = Date.now();
+          const activePlayers = gameState.onlinePlayers.filter(p => p.id === gameState.myPlayerId || (now - (p.lastActive || now)) < 10000);
+          if (activePlayers.length !== gameState.onlinePlayers.length) {
+            gameState.onlinePlayers = activePlayers;
+            renderOnlineLobby();
+          }
+          broadcastPlayersList();
+        }
+      }, 1500);
     };
 
     wsClient.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
 
-        if (msg.type === 'join' || msg.type === 'ping') {
+        if (msg.type === 'join' || msg.type === 'heartbeat') {
           handleIncomingPlayer(msg);
-        } else if (msg.type === 'request_sync') {
-          if (gameState.isHost) {
-            broadcastPlayersList();
-          }
         } else if (msg.type === 'sync_players') {
-          if (!gameState.isHost && msg.players) {
+          if (!gameState.isHost && msg.players && msg.players.length > 0) {
             gameState.onlinePlayers = msg.players;
             renderOnlineLobby();
           }
@@ -195,10 +199,10 @@ function connectCrossPlatformSocket(code) {
     };
 
     wsClient.onerror = () => {
-      console.log('WSS connection retry');
+      console.log('WS reconnecting...');
     };
   } catch (e) {
-    console.log('WS init err:', e);
+    console.log('WS setup error:', e);
   }
 }
 
@@ -216,14 +220,15 @@ function broadcastPlayersList() {
 }
 
 function handleIncomingPlayer(msg) {
-  if (!gameState.onlinePlayers.some(p => p.id === msg.id)) {
-    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: msg.isHost });
+  const now = Date.now();
+  const existing = gameState.onlinePlayers.find(p => p.id === msg.id);
+
+  if (!existing) {
+    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: msg.isHost, lastActive: now });
   } else {
-    const p = gameState.onlinePlayers.find(p => p.id === msg.id);
-    if (p) {
-      p.name = msg.name;
-      if (msg.isHost) p.isHost = true;
-    }
+    existing.name = msg.name;
+    existing.lastActive = now;
+    if (msg.isHost) existing.isHost = true;
   }
 
   renderOnlineLobby();
