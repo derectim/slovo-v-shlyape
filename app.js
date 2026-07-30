@@ -1,6 +1,5 @@
 /**
- * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web).
- * Использует надежный WebSocket Relay для 100% сопряжения между Telegram и ВКонтакте.
+ * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -37,7 +36,7 @@ let gameState = {
   currentMode: 'random', // 'random' или 'manual'
   onlineRoomCode: null,
   isHost: false,
-  myPlayerId: 'p_' + Math.random().toString(36).substr(2, 7),
+  myPlayerId: 'p_' + Math.random().toString(36).substr(2, 7) + '_' + Date.now().toString(36),
   myPlayerName: '',
   rawPlayerNames: ['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4'],
   onlinePlayers: [],
@@ -58,7 +57,7 @@ let gameState = {
   secondsLeft: 0
 };
 
-// WebSocket клиент для гарантированной связи Telegram <-> VK
+// WebSocket клиент
 let wsClient = null;
 let roomPingInterval = null;
 
@@ -140,14 +139,13 @@ function connectCrossPlatformSocket(code) {
   }
   clearInterval(roomPingInterval);
 
-  // Публичный открытый WSS шлюз для связки Telegram + VK + Web
-  const wsUrl = `wss://free.chatws.net/room_${code}`;
+  const wsUrl = `wss://free.chatws.net/shlyapa_room_${code}`;
 
   try {
     wsClient = new WebSocket(wsUrl);
 
     wsClient.onopen = () => {
-      // Отправляем анонс о своем входе в комнату
+      // 1. Анонсируем себя
       sendWsMessage({
         type: 'join',
         id: gameState.myPlayerId,
@@ -155,7 +153,13 @@ function connectCrossPlatformSocket(code) {
         isHost: gameState.isHost
       });
 
-      // Периодический пинг каждые 3 секунды для поддержания открытой связи
+      // 2. Запрашиваем синхронизацию текущего состояния комнаты от хоста
+      sendWsMessage({
+        type: 'request_sync',
+        id: gameState.myPlayerId
+      });
+
+      // 3. Пинг каждые 2 секунды для поддержания активности
       roomPingInterval = setInterval(() => {
         sendWsMessage({
           type: 'ping',
@@ -163,7 +167,7 @@ function connectCrossPlatformSocket(code) {
           name: getMyName(),
           isHost: gameState.isHost
         });
-      }, 3000);
+      }, 2000);
     };
 
     wsClient.onmessage = (event) => {
@@ -172,6 +176,10 @@ function connectCrossPlatformSocket(code) {
 
         if (msg.type === 'join' || msg.type === 'ping') {
           handleIncomingPlayer(msg);
+        } else if (msg.type === 'request_sync') {
+          if (gameState.isHost) {
+            broadcastPlayersList();
+          }
         } else if (msg.type === 'sync_players') {
           if (!gameState.isHost && msg.players) {
             gameState.onlinePlayers = msg.players;
@@ -187,7 +195,7 @@ function connectCrossPlatformSocket(code) {
     };
 
     wsClient.onerror = () => {
-      console.log('WSS connect retry');
+      console.log('WSS connection retry');
     };
   } catch (e) {
     console.log('WS init err:', e);
@@ -198,6 +206,13 @@ function sendWsMessage(obj) {
   if (wsClient && wsClient.readyState === WebSocket.OPEN) {
     wsClient.send(JSON.stringify(obj));
   }
+}
+
+function broadcastPlayersList() {
+  sendWsMessage({
+    type: 'sync_players',
+    players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
+  });
 }
 
 function handleIncomingPlayer(msg) {
@@ -213,12 +228,8 @@ function handleIncomingPlayer(msg) {
 
   renderOnlineLobby();
 
-  // Хост рассылает обновленный список игроков всем клиентам (Telegram и VK)
   if (gameState.isHost) {
-    sendWsMessage({
-      type: 'sync_players',
-      players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
-    });
+    broadcastPlayersList();
   }
 }
 
