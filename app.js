@@ -1,5 +1,5 @@
 /**
- * «Слово в шляпе» — Полная логика веб-игры с анимированными свайпами, таймером и конфетти.
+ * «Слово в шляпе» — Локальный режим (1 устройство) + Онлайн-мультиплеер по коду комнаты.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -32,8 +32,13 @@ const ROUNDS = [
 
 // Состояние Игры (Game State)
 let gameState = {
+  playMode: 'local', // 'local' или 'online'
   currentMode: 'random', // 'random' или 'manual'
+  onlineRoomCode: null,
+  isHost: false,
+  myPlayerId: Math.random().toString(36).substr(2, 6),
   rawPlayerNames: ['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4'],
+  onlinePlayers: [],
   teams: [
     { name: 'Команда 1', playerNames: ['Игрок 1', 'Игрок 2'], roundScores: [0, 0, 0], explainerCursor: 0 },
     { name: 'Команда 2', playerNames: ['Игрок 3', 'Игрок 4'], roundScores: [0, 0, 0], explainerCursor: 0 }
@@ -75,6 +80,108 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
+// 0. ОНЛАЙН МУЛЬТИПЛЕЕР (ХАБ И ЛОББИ КОМНАТ)
+// --------------------------------------------------------------------------
+
+function generateRoomCode() {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
+function createOnlineRoom() {
+  gameState.playMode = 'online';
+  gameState.isHost = true;
+  gameState.onlineRoomCode = generateRoomCode();
+
+  const myName = `Игрок ${Math.floor(10 + Math.random() * 90)}`;
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
+
+  renderOnlineLobby();
+  showScreen('screen-online-lobby');
+}
+
+function joinOnlineRoom(code) {
+  if (!code || code.length !== 4) {
+    alert('Пожалуйста, введите 4-значный код комнаты!');
+    return;
+  }
+  gameState.playMode = 'online';
+  gameState.isHost = false;
+  gameState.onlineRoomCode = code.toUpperCase();
+
+  const myName = `Игрок ${Math.floor(10 + Math.random() * 90)}`;
+  gameState.onlinePlayers = [
+    { id: 'host_id', name: 'Организатор', isHost: true },
+    { id: gameState.myPlayerId, name: myName, isHost: false }
+  ];
+
+  renderOnlineLobby();
+  showScreen('screen-online-lobby');
+}
+
+function renderOnlineLobby() {
+  document.getElementById('lobby-code-display').textContent = gameState.onlineRoomCode;
+  document.getElementById('lobby-code-badge').textContent = `КОД: ${gameState.onlineRoomCode}`;
+  document.getElementById('lobby-players-count').textContent = gameState.onlinePlayers.length;
+
+  const container = document.getElementById('lobby-players-list');
+  if (container) {
+    container.innerHTML = gameState.onlinePlayers.map(p => `
+      <div class="player-row" style="background: rgba(255,255,255,0.06); padding: 10px 14px; border-radius: 12px; justify-content: space-between;">
+        <span style="font-weight: 700;">${escapeHtml(p.name)} ${p.id === gameState.myPlayerId ? ' (Вы)' : ''}</span>
+        ${p.isHost ? '<span class="team-badge">👑 Хост</span>' : '<span class="setting-hint">Подключен</span>'}
+      </div>
+    `).join('');
+  }
+
+  const startBtn = document.getElementById('btn-host-start-setup');
+  if (startBtn) {
+    if (!gameState.isHost) {
+      startBtn.style.display = 'none';
+    } else {
+      startBtn.style.display = 'flex';
+    }
+  }
+}
+
+function shareRoomLink() {
+  const roomUrl = `${window.location.origin}${window.location.pathname}#room=${gameState.onlineRoomCode}`;
+  
+  if (window.vkBridge && typeof window.vkBridge.send === 'function') {
+    try {
+      window.vkBridge.send('VKWebAppShare', { link: roomUrl });
+      return;
+    } catch (e) {}
+  }
+
+  if (navigator.share) {
+    navigator.share({
+      title: 'Слово в шляпе — Присоединяйся к игре!',
+      text: `Заходи в мою онлайн-комнату! Код: ${gameState.onlineRoomCode}`,
+      url: roomUrl
+    }).catch(() => {});
+  } else {
+    navigator.clipboard.writeText(roomUrl);
+    alert(`Ссылка скопирована в буфер обмена!\nКод комнаты: ${gameState.onlineRoomCode}`);
+  }
+}
+
+// Проверка входной ссылки с кодом комнаты (#room=7392 или ?room=7392)
+function checkUrlRoomCode() {
+  let code = null;
+  const hashMatch = window.location.hash.match(/room=([0-9]{4})/i);
+  if (hashMatch) {
+    code = hashMatch[1];
+  } else {
+    const searchParams = new URLSearchParams(window.location.search);
+    code = searchParams.get('room') || searchParams.get('startapp');
+  }
+
+  if (code && code.length === 4) {
+    joinOnlineRoom(code);
+  }
+}
+
+// --------------------------------------------------------------------------
 // 1. НАСТРОЙКА ИГРЫ (РЕЖИМ 1: СЛУЧАЙНЫЕ ПАРЫ | РЕЖИМ 2: РУЧНЫЕ КОМАНДЫ)
 // --------------------------------------------------------------------------
 
@@ -96,7 +203,7 @@ function switchSetupMode(mode) {
     tabManual.classList.add('active');
     tabRandom.classList.remove('active');
     viewManual.classList.remove('hidden');
-    viewRandom.classList.add('hidden');
+    viewManual.classList.add('hidden');
     renderManualTeams();
   }
 }
@@ -236,7 +343,6 @@ function removeTeam(tIdx) {
 
 function startWordEntry() {
   if (gameState.currentMode === 'random') {
-    // Автоматически формируем пары перед стартом, если не нажали вручную
     shuffleRawPairs();
   }
 
@@ -323,7 +429,6 @@ function submitCurrentPlayerWords() {
 function startRound(roundIndex) {
   gameState.currentRoundIndex = roundIndex;
   
-  // В Раунде 1 начинаем с Команды 1, а в Раундах 2 и 3 очередь сохраняется по кругу!
   if (roundIndex === 0) {
     gameState.activeTeamIndex = 0;
   }
@@ -422,7 +527,6 @@ function handleCardGuess() {
   gameState.currentCard = null;
 
   if (gameState.deck.length === 0) {
-    // All words in the hat for this round are guessed! Round ends!
     finishTurn(true);
   } else {
     drawNextCard();
@@ -457,7 +561,6 @@ function finishTurn(roundCompleted = false) {
     gameState.deck.sort(() => Math.random() - 0.5);
   }
 
-  // При КАЖДОМ завершении хода напарники в команде автоматически меняются ролями!
   const activeTeam = gameState.teams[gameState.activeTeamIndex];
   activeTeam.explainerCursor += 1;
 
@@ -516,12 +619,10 @@ function initSwipeCard() {
   cardElem = document.getElementById('swipe-card');
   if (!cardElem) return;
 
-  // Touch Events
   cardElem.addEventListener('touchstart', handleDragStart, { passive: true });
   cardElem.addEventListener('touchmove', handleDragMove, { passive: false });
   cardElem.addEventListener('touchend', handleDragEnd);
 
-  // Mouse Events
   cardElem.addEventListener('mousedown', handleDragStart);
   window.addEventListener('mousemove', handleDragMove);
   window.addEventListener('mouseup', handleDragEnd);
@@ -548,7 +649,6 @@ function handleDragMove(e) {
   const rotateDeg = currentX * 0.08;
   cardElem.style.transform = `translate3d(${currentX}px, ${currentY}px, 0) rotate(${rotateDeg}deg)`;
 
-  // Swipe Indicators Opacity
   const guessBadge = document.getElementById('card-badge-guess');
   const skipBadge = document.getElementById('card-badge-skip');
 
@@ -571,21 +671,18 @@ function handleDragEnd() {
   const threshold = 100;
 
   if (currentX > threshold) {
-    // Animate Away Right (Guess)
     cardElem.style.transition = 'transform 0.3s ease-out';
     cardElem.style.transform = `translate3d(500px, ${currentY}px, 0) rotate(40deg)`;
     setTimeout(() => {
       handleCardGuess();
     }, 200);
   } else if (currentX < -threshold) {
-    // Animate Away Left (Skip)
     cardElem.style.transition = 'transform 0.3s ease-out';
     cardElem.style.transform = `translate3d(-500px, ${currentY}px, 0) rotate(-40deg)`;
     setTimeout(() => {
       handleCardSkip();
     }, 200);
   } else {
-    // Spring back
     resetCardTransform();
   }
 }
@@ -632,7 +729,6 @@ function showRoundResults() {
 }
 
 function showFinalResults() {
-  // Sort by total scores
   const ranking = [...gameState.teams].sort((a, b) => {
     const totalA = a.roundScores.reduce((s, v) => s + v, 0);
     const totalB = b.roundScores.reduce((s, v) => s + v, 0);
@@ -666,7 +762,7 @@ function showFinalResults() {
 }
 
 // --------------------------------------------------------------------------
-// 7. ЭФФЕКТ КОНФЕТТИ (CANVAS CONFETTI EFFECT)
+// 7. ЭФФЕКТ КОНФЕТТИ
 // --------------------------------------------------------------------------
 
 function triggerConfetti() {
@@ -707,7 +803,7 @@ function triggerConfetti() {
     particles.forEach(p => {
       p.x += p.vx;
       p.y += p.vy;
-      p.vy += 0.3; // Gravity
+      p.vy += 0.3;
       p.rotation += p.rSpeed;
 
       ctx.save();
@@ -729,25 +825,74 @@ function triggerConfetti() {
 // --------------------------------------------------------------------------
 
 function initApp() {
+  // Main screen Mode Selection
+  const btnLocal = document.getElementById('btn-mode-local');
+  if (btnLocal) {
+    btnLocal.addEventListener('click', () => {
+      gameState.playMode = 'local';
+      switchSetupMode('random');
+      showScreen('screen-setup');
+    });
+  }
+
+  const btnOnline = document.getElementById('btn-mode-online');
+  if (btnOnline) {
+    btnOnline.addEventListener('click', () => {
+      showScreen('screen-online-hub');
+    });
+  }
+
+  // Online Hub & Lobby Buttons
+  const btnHubBack = document.getElementById('btn-online-hub-back');
+  if (btnHubBack) {
+    btnHubBack.addEventListener('click', () => showScreen('screen-home'));
+  }
+
+  const btnCreateRoom = document.getElementById('btn-create-online-room');
+  if (btnCreateRoom) {
+    btnCreateRoom.addEventListener('click', createOnlineRoom);
+  }
+
+  const btnJoinAction = document.getElementById('btn-join-room-action');
+  if (btnJoinAction) {
+    btnJoinAction.addEventListener('click', () => {
+      const code = document.getElementById('input-room-code-join').value.trim();
+      joinOnlineRoom(code);
+    });
+  }
+
+  const btnLobbyLeave = document.getElementById('btn-lobby-leave');
+  if (btnLobbyLeave) {
+    btnLobbyLeave.addEventListener('click', () => showScreen('screen-online-hub'));
+  }
+
+  const btnShareLink = document.getElementById('btn-share-room-link');
+  if (btnShareLink) {
+    btnShareLink.addEventListener('click', shareRoomLink);
+  }
+
+  const btnHostStartSetup = document.getElementById('btn-host-start-setup');
+  if (btnHostStartSetup) {
+    btnHostStartSetup.addEventListener('click', () => {
+      switchSetupMode('random');
+      showScreen('screen-setup');
+    });
+  }
+
   // Tabs
   const tabRandom = document.getElementById('tab-mode-random');
   const tabManual = document.getElementById('tab-mode-manual');
   if (tabRandom) tabRandom.addEventListener('click', () => switchSetupMode('random'));
   if (tabManual) tabManual.addEventListener('click', () => switchSetupMode('manual'));
 
-  // Navigation & Buttons
-  const btnStart = document.getElementById('btn-start-game');
-  if (btnStart) {
-    btnStart.addEventListener('click', () => {
-      switchSetupMode('random');
-      showScreen('screen-setup');
-    });
-  }
-
   const btnSetupBack = document.getElementById('btn-setup-back');
   if (btnSetupBack) {
     btnSetupBack.addEventListener('click', () => {
-      showScreen('screen-home');
+      if (gameState.playMode === 'online') {
+        showScreen('screen-online-lobby');
+      } else {
+        showScreen('screen-home');
+      }
     });
   }
 
@@ -870,6 +1015,9 @@ function initApp() {
 
   // Initialize Swiper
   initSwipeCard();
+
+  // Check URL Deeplinks
+  checkUrlRoomCode();
 }
 
 // Гарантированная инициализация

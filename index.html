@@ -11,8 +11,11 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <!-- Local VK Bridge Bundle for 100% Reliable Execution -->
-  <script src="vk-bridge.js?v=2.0.9"></script>
+  <!-- Supabase Realtime JS SDK (Robust WebSocket for Russia/CIS) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  <!-- Local VK Bridge Bundle -->
+  <script src="vk-bridge.js?v=2.1.0"></script>
   <script>
     (function initVK() {
       function sendVKInit() {
@@ -34,7 +37,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=2.0.9">
+  <link rel="stylesheet" href="styles.css?v=2.1.0">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -42,7 +45,7 @@
 
   <div class="app-container">
     
-    <!-- 1. HOME SCREEN -->
+    <!-- 1. HOME SCREEN (MODE SELECTOR) -->
     <section id="screen-home" class="screen active">
       <div class="screen-content center-content">
         <div class="hero-badge">
@@ -52,14 +55,82 @@
         <p class="hero-subtitle">Объясняй, показывай жестами и угадывай вместе с друзьями</p>
         
         <div class="action-stack">
-          <button id="btn-start-game" class="btn btn-primary btn-large glow-effect">
-            <span class="btn-icon">▶</span> Новая игра
+          <button id="btn-mode-local" class="btn btn-primary btn-large glow-effect">
+            <span class="btn-icon">📱</span> Игра на 1 устройстве
           </button>
-          <button id="btn-open-rules" class="btn btn-secondary">
+          <button id="btn-mode-online" class="btn btn-secondary btn-large">
+            <span class="btn-icon">🌐</span> Онлайн по коду комнаты
+          </button>
+          <button id="btn-open-rules" class="btn btn-outline">
             <span class="btn-icon">📖</span> Как играть
           </button>
         </div>
       </div>
+    </section>
+
+    <!-- 1.5 ONLINE ROOM HUB SCREEN -->
+    <section id="screen-online-hub" class="screen">
+      <header class="screen-header">
+        <button class="btn-back" id="btn-online-hub-back">← Главная</button>
+        <h2>Онлайн-игра</h2>
+      </header>
+
+      <div class="screen-content center-content">
+        <div class="section-card" style="width: 100%;">
+          <h3>Создать комнату</h3>
+          <p class="section-desc">Вы станете хостом, получите 4-значный код и сможете отправить ссылку друзьям в VK или Telegram.</p>
+          <button id="btn-create-online-room" class="btn btn-primary btn-full glow-effect">
+            <span>✨</span> Создать новую комнату
+          </button>
+        </div>
+
+        <div class="section-card" style="width: 100%;">
+          <h3>Войти по коду</h3>
+          <p class="section-desc">Введите 4-значный код комнаты, который вам прислал организатор партии.</p>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="input-room-code-join" class="input-field" placeholder="Например: 7392" maxlength="4" style="text-align: center; font-size: 20px; font-weight: 800; letter-spacing: 4px; text-transform: uppercase;">
+            <button id="btn-join-room-action" class="btn btn-success glow-success" style="white-space: nowrap;">
+              Войти ➔
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1.6 ONLINE LOBBY SCREEN -->
+    <section id="screen-online-lobby" class="screen">
+      <header class="screen-header">
+        <button class="btn-back" id="btn-lobby-leave">← Покинуть комнату</button>
+        <h2>Комната <span id="lobby-code-display" class="gradient-text" style="font-family: 'Outfit';">7392</span></h2>
+      </header>
+
+      <div class="screen-content">
+        <div class="section-card">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <span class="setting-hint">Приглашение друзьям</span>
+              <h3 style="font-size: 24px; font-weight: 900; letter-spacing: 2px;" id="lobby-code-badge">КОД: 7392</h3>
+            </div>
+            <button id="btn-share-room-link" class="btn btn-sm btn-primary">
+              🔗 Поделиться
+            </button>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <h3>Участники в комнате (<span id="lobby-players-count">1</span>)</h3>
+          <p class="section-desc">Все подключившиеся игроки отображаются в реальном времени:</p>
+          <div id="lobby-players-list" class="players-input-list">
+            <!-- Dynamic players list in lobby -->
+          </div>
+        </div>
+      </div>
+
+      <footer class="screen-footer">
+        <button id="btn-host-start-setup" class="btn btn-primary btn-large btn-full glow-effect">
+          Настроить команды и начать ➔
+        </button>
+      </footer>
     </section>
 
     <!-- 2. SETUP SCREEN -->
@@ -321,8 +392,8 @@
         <div class="rule-item">
           <div class="rule-num">1</div>
           <div class="rule-text">
-            <strong>Смена ролей в паре</strong>
-            <p>Каждый следующий ход команды напарники меняются ролями: кто был объясняющим — становится угадывающим!</p>
+            <strong>Два режима игры</strong>
+            <p><strong>📱 На 1 устройстве</strong>: передавайте телефон по кругу.<br><strong>🌐 Онлайн</strong>: создавайте комнату по коду для игры с разных смартфонов!</p>
           </div>
         </div>
         <div class="rule-item">
@@ -350,6 +421,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.9"></script>
+  <script src="app.js?v=2.1.0"></script>
 </body>
 </html>
