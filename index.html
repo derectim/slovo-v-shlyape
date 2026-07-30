@@ -11,16 +11,28 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <!-- VK Bridge SDK for VK Mini Apps (supports both vk.com and vk.ru) -->
+  <!-- VK Bridge SDK for VK Mini Apps & Direct Handshake -->
   <script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser/vk-bridge.js"></script>
   <script>
-    try {
-      if (window.vkBridge) {
-        window.vkBridge.send('VKWebAppInit', {});
+    (function() {
+      function sendInit() {
+        try {
+          if (window.vkBridge) {
+            window.vkBridge.send('VKWebAppInit', {});
+          }
+        } catch (e) {}
+        try {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage(JSON.stringify({ type: 'VKWebAppInit' }), '*');
+            window.parent.postMessage(JSON.stringify({ type: 'VKWebAppInitResult', data: { status: true } }), '*');
+          }
+        } catch (e) {}
       }
-    } catch (e) {
-      console.log('VK Bridge init error:', e);
-    }
+
+      sendInit();
+      window.addEventListener('DOMContentLoaded', sendInit);
+      window.addEventListener('load', sendInit);
+    })();
   </script>
 
   <!-- Google Fonts: Plus Jakarta Sans & Outfit -->
@@ -28,7 +40,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=2.0.6">
+  <link rel="stylesheet" href="styles.css?v=2.0.7">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -340,6 +352,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.6"></script>
+  <script src="app.js?v=2.0.7"></script>
 </body>
 </html>
