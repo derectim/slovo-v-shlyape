@@ -32,6 +32,54 @@ let pendingTurnAction = null;
 let turnActionRetryTimer = null;
 let viewportRefreshTimer = null;
 
+const PLAYER_ID_STORAGE_KEY = 'slovo_hat_player_id_v1';
+const ROOM_SESSION_STORAGE_KEY = 'slovo_hat_room_session_v1';
+const ROOM_SESSION_TTL_MS = 6 * 60 * 60 * 1000;
+
+function getOrCreatePersistentPlayerId() {
+  try {
+    const storedId = localStorage.getItem(PLAYER_ID_STORAGE_KEY);
+    if (storedId && /^p_[a-zA-Z0-9_-]{6,80}$/.test(storedId)) return storedId;
+    const randomPart = window.crypto && typeof window.crypto.randomUUID === 'function'
+      ? window.crypto.randomUUID().replace(/-/g, '')
+      : `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+    const playerId = `p_${randomPart.slice(0, 40)}`;
+    localStorage.setItem(PLAYER_ID_STORAGE_KEY, playerId);
+    return playerId;
+  } catch (_) {
+    return `p_${Math.random().toString(36).slice(2, 12)}_${Date.now().toString(36)}`;
+  }
+}
+
+function saveOnlineSession(code, isHost, name) {
+  try {
+    localStorage.setItem(ROOM_SESSION_STORAGE_KEY, JSON.stringify({
+      code,
+      isHost: Boolean(isHost),
+      name: String(name || '').trim().slice(0, 40),
+      savedAt: Date.now()
+    }));
+  } catch (_) {}
+}
+
+function readOnlineSession() {
+  try {
+    const session = JSON.parse(localStorage.getItem(ROOM_SESSION_STORAGE_KEY) || 'null');
+    if (!session || !/^\d{4}$/.test(String(session.code || ''))
+      || Date.now() - Number(session.savedAt || 0) > ROOM_SESSION_TTL_MS) {
+      localStorage.removeItem(ROOM_SESSION_STORAGE_KEY);
+      return null;
+    }
+    return session;
+  } catch (_) {
+    return null;
+  }
+}
+
+function clearOnlineSession() {
+  try { localStorage.removeItem(ROOM_SESSION_STORAGE_KEY); } catch (_) {}
+}
+
 const MULTIPLAYER_SERVER_URL = window.__GAME_WS_URL__
   || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'ws://127.0.0.1:8787'
@@ -111,7 +159,7 @@ let gameState = {
   currentMode: 'random', // 'random' или 'manual'
   onlineRoomCode: null,
   isHost: false,
-  myPlayerId: 'p_' + Math.random().toString(36).substr(2, 7) + '_' + Math.floor(Math.random()*1000),
+  myPlayerId: getOrCreatePersistentPlayerId(),
   myPlayerName: '',
   rawPlayerNames: ['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4'],
   onlinePlayers: [],
@@ -166,6 +214,10 @@ function getMyName() {
     gameState.myPlayerName = input.value.trim();
   }
   if (!gameState.myPlayerName) {
+    const savedSession = readOnlineSession();
+    if (savedSession && savedSession.name) gameState.myPlayerName = savedSession.name;
+  }
+  if (!gameState.myPlayerName) {
     gameState.myPlayerName = `Игрок ${Math.floor(10 + Math.random() * 90)}`;
   }
   return gameState.myPlayerName;
@@ -175,12 +227,13 @@ function generateRoomCode() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
-function createOnlineRoom() {
+function createOnlineRoom(forcedCode = null) {
   destroyPeerNetwork();
   gameState.playMode = 'online';
   gameState.isHost = true;
-  gameState.onlineRoomCode = generateRoomCode();
+  gameState.onlineRoomCode = /^\d{4}$/.test(String(forcedCode || '')) ? String(forcedCode) : generateRoomCode();
   const myName = getMyName();
+  saveOnlineSession(gameState.onlineRoomCode, true, myName);
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true, lastActive: Date.now() }];
 
@@ -199,6 +252,7 @@ function joinOnlineRoom(code) {
   gameState.isHost = false;
   gameState.onlineRoomCode = code;
   const myName = getMyName();
+  saveOnlineSession(gameState.onlineRoomCode, false, myName);
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false, lastActive: Date.now() }];
 
@@ -245,6 +299,7 @@ function destroyPeerNetwork() {
 }
 
 function leaveOnlineRoom() {
+  clearOnlineSession();
   gameState.playMode = 'local';
   gameState.isHost = false;
   gameState.onlineRoomCode = null;
@@ -307,7 +362,8 @@ function connectRoomSocket(code, isHost) {
       ? '● Комната доступна — можно приглашать игроков'
       : '● Подключено к комнате');
     sendSocketPayload({ type: 'request_sync' });
-    if (!isHost) requestTurnSync();
+    sendSocketPayload({ type: 'request_room_snapshot' });
+    requestTurnSync();
     startRoomHeartbeat();
     trySendPendingWordSubmission();
     trySendPendingTurnAction();
@@ -346,6 +402,7 @@ function handleRoomSocketMessage(data, code, isHost) {
       hostCollisionAttempts += 1;
       const nextCode = generateRoomCode();
       gameState.onlineRoomCode = nextCode;
+      saveOnlineSession(nextCode, true, getMyName());
       renderOnlineLobby();
       setTimeout(() => connectRoomSocket(nextCode, true), 150);
       return;
@@ -361,6 +418,8 @@ function handleRoomSocketMessage(data, code, isHost) {
   if (data.type === 'sync_players' && Array.isArray(data.players)) {
     gameState.onlinePlayers = data.players;
     renderOnlineLobby();
+  } else if (data.type === 'room_snapshot') {
+    handleOnlineRoomSnapshot(data);
   } else if (isHost && data.type === 'submit_words') {
     handleOnlineWordSubmission(data);
   } else if (!isHost && data.type === 'words_accepted' && data.playerId === gameState.myPlayerId) {
@@ -384,18 +443,7 @@ function handleRoomSocketMessage(data, code, isHost) {
     beginOnlineGame(data);
   } else if (isHost && data.type === 'turn_action') {
     handleOnlineTurnAction(data);
-  } else if (isHost && data.type === 'request_turn_sync') {
-    broadcastToPeers({
-      type: 'game_sync',
-      targetPlayerId: data.senderId,
-      phase: onlinePhase,
-      state: createOnlineGameSnapshot(),
-      deadline: onlineTurnDeadline,
-      acknowledgedActionId: data.pendingActionId && processedTurnActionIds.has(data.pendingActionId)
-        ? data.pendingActionId
-        : null
-    });
-  } else if (!isHost && data.type === 'game_sync') {
+  } else if (data.type === 'game_sync') {
     applyOnlineGameSync(data);
   } else if (!isHost && data.type === 'turn_started') {
     applyOnlineGameSnapshot(data.state);
@@ -434,6 +482,54 @@ function handleRoomSocketMessage(data, code, isHost) {
     clearPendingTurnAction();
     applyOnlineGameSnapshot(data.state);
     showFinalResults();
+  }
+}
+
+function handleOnlineRoomSnapshot(data) {
+  if (!data || typeof data !== 'object') return;
+  if (Array.isArray(data.players)) gameState.onlinePlayers = data.players;
+  const game = data.game && typeof data.game === 'object' ? data.game : null;
+  const phase = data.phase || game?.phase || 'lobby';
+
+  if (!game || phase === 'lobby') {
+    onlinePhase = 'lobby';
+    renderOnlineLobby();
+    showScreen('screen-online-lobby');
+    return;
+  }
+
+  if (Array.isArray(game.teams)) gameState.teams = game.teams;
+  gameState.wordsPerPlayer = Number(game.wordsPerPlayer) || gameState.wordsPerPlayer;
+  gameState.turnSeconds = Number(game.turnSeconds) || gameState.turnSeconds;
+
+  if (phase === 'word_entry') {
+    if (gameState.isHost && data.wordSubmissions && typeof data.wordSubmissions === 'object') {
+      hostWordSubmissions = new Map(Object.entries(data.wordSubmissions)
+        .filter(([, submission]) => submission
+          && Array.isArray(submission.words)
+          && submission.words.length === gameState.wordsPerPlayer)
+        .map(([playerId, submission]) => [playerId, submission.words]));
+    }
+    startWordEntry();
+    const submittedIds = Array.isArray(data.submittedPlayerIds) ? data.submittedPlayerIds : [];
+    if (submittedIds.includes(gameState.myPlayerId)) {
+      hasSubmittedWords = true;
+      pendingWordSubmission = null;
+      clearTimeout(submissionRetryTimer);
+      submissionRetryTimer = null;
+      showOnlineWordProgress(data.submitted || submittedIds.length, getExpectedOnlinePlayerCount());
+    }
+    if (gameState.isHost) completeOnlineWordCollectionIfReady();
+    return;
+  }
+
+  if (game.state) {
+    applyOnlineGameSync({
+      phase,
+      state: game.state,
+      deadline: game.deadline || 0,
+      acknowledgedActionId: game.acknowledgedActionId || null
+    });
   }
 }
 
@@ -485,7 +581,8 @@ function broadcastToPeers(payloadObj) {
 
 function handleOnlineWordSubmission(data) {
   if (!gameState.isHost || !data || !data.playerId || !Array.isArray(data.words)) return false;
-  const playerExists = gameState.onlinePlayers.some(player => player.id === data.playerId);
+  const playerExists = getAllPlayers().some(player => player.id === data.playerId)
+    || gameState.onlinePlayers.some(player => player.id === data.playerId);
   const words = data.words
     .map(word => typeof word === 'string' ? word.trim() : '')
     .filter(Boolean)
@@ -495,7 +592,7 @@ function handleOnlineWordSubmission(data) {
 
   hostWordSubmissions.set(data.playerId, words);
   const submitted = hostWordSubmissions.size;
-  const total = gameState.onlinePlayers.length;
+  const total = getExpectedOnlinePlayerCount();
   const progressPayload = { type: 'word_progress', submitted, total };
   broadcastToPeers(progressPayload);
   broadcastToPeers({
@@ -507,7 +604,19 @@ function handleOnlineWordSubmission(data) {
   });
   if (hasSubmittedWords) showOnlineWordProgress(submitted, total);
 
-  if (submitted < total) return true;
+  completeOnlineWordCollectionIfReady();
+  return true;
+}
+
+function getExpectedOnlinePlayerCount() {
+  const teamPlayerIds = getAllPlayers().map(player => player.id).filter(Boolean);
+  return teamPlayerIds.length || gameState.onlinePlayers.length;
+}
+
+function completeOnlineWordCollectionIfReady() {
+  if (!gameState.isHost) return false;
+  const total = getExpectedOnlinePlayerCount();
+  if (!total || hostWordSubmissions.size < total) return false;
 
   gameState.allCards = [];
   hostWordSubmissions.forEach((playerWords, playerId) => {
@@ -524,7 +633,9 @@ function handleOnlineWordSubmission(data) {
     type: 'game_ready',
     allCards: gameState.allCards,
     deck,
-    teams: gameState.teams
+    teams: gameState.teams,
+    wordsPerPlayer: gameState.wordsPerPlayer,
+    turnSeconds: gameState.turnSeconds
   };
   broadcastToPeers(readyPayload);
   beginOnlineGame(readyPayload);
@@ -630,7 +741,7 @@ function applyOnlineGameSnapshot(state) {
 }
 
 function applyOnlineGameSync(data) {
-  if (!data || !data.state || gameState.isHost) return;
+  if (!data || !data.state) return;
   const previousCardId = gameState.currentCard && gameState.currentCard.id;
   applyOnlineGameSnapshot(data.state);
   const nextCardId = gameState.currentCard && gameState.currentCard.id;
@@ -749,7 +860,22 @@ function checkUrlRoomCode() {
   const match = raw.match(/([0-9]{4})/);
   if (match && /room|startapp|code/i.test(raw)) {
     joinOnlineRoom(match[1]);
+    return true;
   }
+  return false;
+}
+
+function restoreSavedOnlineSession() {
+  const session = readOnlineSession();
+  if (!session) return false;
+  if (session.name) {
+    gameState.myPlayerName = session.name;
+    const input = document.getElementById('input-online-player-name');
+    if (input) input.value = session.name;
+  }
+  if (session.isHost) createOnlineRoom(session.code);
+  else joinOnlineRoom(session.code);
+  return true;
 }
 
 // --------------------------------------------------------------------------
@@ -938,6 +1064,7 @@ function startWordEntry() {
 
   const allPlayers = getAllPlayers();
   if (gameState.playMode === 'online') {
+    onlinePhase = 'word_entry';
     const myIndex = allPlayers.findIndex(player => player.id === gameState.myPlayerId);
     gameState.wordEntryPlayerIndex = myIndex >= 0 ? myIndex : 0;
   } else {
@@ -1030,8 +1157,9 @@ function submitCurrentPlayerWords() {
     };
     if (gameState.isHost) {
       hasSubmittedWords = true;
+      sendSocketPayload({ ...submission, type: 'store_host_words' });
       handleOnlineWordSubmission(submission);
-      showOnlineWordProgress(hostWordSubmissions.size, gameState.onlinePlayers.length);
+      showOnlineWordProgress(hostWordSubmissions.size, getExpectedOnlinePlayerCount());
     } else {
       hasSubmittedWords = false;
       pendingWordSubmission = submission;
@@ -1147,7 +1275,7 @@ function prepareTurnState() {
   drawNextCard();
 }
 
-function startOnlineTurnAuthoritative() {
+function startOnlineTurnAuthoritative(acknowledgedActionId = null) {
   if (!gameState.isHost || onlineTurnActive) return;
   prepareTurnState();
   onlineTurnActive = true;
@@ -1156,7 +1284,8 @@ function startOnlineTurnAuthoritative() {
   broadcastToPeers({
     type: 'turn_started',
     state: createOnlineGameSnapshot(),
-    deadline: onlineTurnDeadline
+    deadline: onlineTurnDeadline,
+    acknowledgedActionId
   });
   renderSynchronizedTurn();
 }
@@ -1251,18 +1380,18 @@ function applyCardGuessMutation() {
   }
 }
 
-function applyOnlineCardGuess() {
+function applyOnlineCardGuess(acknowledgedActionId = null) {
   if (!gameState.isHost || !onlineTurnActive || !gameState.currentCard) return;
   gameState.teams[gameState.activeTeamIndex].roundScores[gameState.currentRoundIndex] += 1;
   gameState.turnGuessedCount += 1;
   gameState.currentCard = null;
 
   if (gameState.deck.length === 0) {
-    finishTurn(true);
+    finishTurn(true, acknowledgedActionId);
     return;
   }
   drawNextCard();
-  broadcastOnlineTurnState();
+  broadcastOnlineTurnState(acknowledgedActionId);
 }
 
 function handleCardSkip() {
@@ -1293,14 +1422,14 @@ function applyCardSkipMutation() {
   updateTurnUI();
 }
 
-function applyOnlineCardSkip() {
+function applyOnlineCardSkip(acknowledgedActionId = null) {
   if (!gameState.isHost || !onlineTurnActive || !gameState.currentCard) return;
   const skippedCard = gameState.currentCard;
   gameState.currentCard = null;
   if (gameState.deck.length === 0) gameState.deck.push(skippedCard);
   else gameState.deck.splice(Math.floor(Math.random() * (gameState.deck.length + 1)), 0, skippedCard);
   drawNextCard();
-  broadcastOnlineTurnState();
+  broadcastOnlineTurnState(acknowledgedActionId);
 }
 
 function sendOnlineTurnAction(action) {
@@ -1350,21 +1479,22 @@ function handleOnlineTurnAction(data) {
     processedTurnActionIds.add(data.actionId);
     if (processedTurnActionIds.size > 200) processedTurnActionIds.clear();
   }
-  if (data.action === 'start' && !onlineTurnActive) startOnlineTurnAuthoritative();
-  else if (data.action === 'guess' && onlineTurnActive) applyOnlineCardGuess();
-  else if (data.action === 'skip' && onlineTurnActive) applyOnlineCardSkip();
+  if (data.action === 'start' && !onlineTurnActive) startOnlineTurnAuthoritative(data.actionId || null);
+  else if (data.action === 'guess' && onlineTurnActive) applyOnlineCardGuess(data.actionId || null);
+  else if (data.action === 'skip' && onlineTurnActive) applyOnlineCardSkip(data.actionId || null);
 }
 
-function broadcastOnlineTurnState() {
+function broadcastOnlineTurnState(acknowledgedActionId = null) {
   broadcastToPeers({
     type: 'turn_state',
     state: createOnlineGameSnapshot(),
-    deadline: onlineTurnDeadline
+    deadline: onlineTurnDeadline,
+    acknowledgedActionId
   });
   renderSynchronizedTurn();
 }
 
-function finishTurn(roundCompleted = false) {
+function finishTurn(roundCompleted = false, acknowledgedActionId = null) {
   if (gameState.playMode === 'online' && !gameState.isHost) return;
   clearInterval(gameState.timerInterval);
   onlineTurnActive = false;
@@ -1385,7 +1515,8 @@ function finishTurn(roundCompleted = false) {
     broadcastToPeers({
       type: 'turn_finished',
       state: createOnlineGameSnapshot(),
-      roundCompleted
+      roundCompleted,
+      acknowledgedActionId
     });
   }
 
@@ -1887,7 +2018,7 @@ function initApp() {
   initSwipeCard();
 
   // Check URL Deeplinks
-  checkUrlRoomCode();
+  if (!checkUrlRoomCode()) restoreSavedOnlineSession();
 }
 
 // Гарантированная инициализация
