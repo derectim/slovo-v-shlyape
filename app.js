@@ -684,7 +684,7 @@ function startTurn() {
   const guesserName = activeTeam.playerNames[guesserIdx];
 
   document.getElementById('turn-active-team').textContent = activeTeam.name;
-  document.getElementById('turn-roles-summary').textContent = `🗣 ${explainerName} ➔ <ctrl42>👂 ${guesserName}`;
+  document.getElementById('turn-roles-summary').textContent = `🗣 ${explainerName} ➔ 👂 ${guesserName}`;
   updateTurnUI();
 
   showScreen('screen-turn');
