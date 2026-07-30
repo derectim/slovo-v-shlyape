@@ -6,16 +6,16 @@
   <title>Слово в шляпе — Настольная командная игра</title>
   <meta name="description" content="Увлекательная мобильная и веб игра для компании «Слово в шляпе». Объясняй, показывай жестами и угадывай слова с друзьями!">
   
-  <!-- Cache Control Headers -->
+  <!-- Strict Anti-Cache Headers -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <!-- Local PeerJS WebRTC P2P Bundle for Instant Direct Phone-to-PC Connection -->
-  <script src="peerjs.min.js?v=2.1.2"></script>
+  <!-- Local PeerJS Bundle -->
+  <script src="peerjs.min.js?v=2.1.3"></script>
 
   <!-- Local VK Bridge Bundle -->
-  <script src="vk-bridge.js?v=2.1.2"></script>
+  <script src="vk-bridge.js?v=2.1.3"></script>
   <script>
     (function initVK() {
       function sendVKInit() {
@@ -37,7 +37,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=2.1.2">
+  <link rel="stylesheet" href="styles.css?v=2.1.3">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -64,6 +64,10 @@
           <button id="btn-open-rules" class="btn btn-outline">
             <span class="btn-icon">📖</span> Как играть
           </button>
+        </div>
+
+        <div style="margin-top: 20px; font-size: 11px; opacity: 0.5; font-weight: 600;">
+          v2.1.3 (Онлайн-мультиплеер)
         </div>
       </div>
     </section>
@@ -426,6 +430,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.1.2"></script>
+  <script src="app.js?v=2.1.3"></script>
 </body>
 </html>
