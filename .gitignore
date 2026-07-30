@@ -1,0 +1,10 @@
+# Flutter / Dart build artifacts (if any)
+.dart_tool/
+.build/
+build/
+.pub/
+.pub-cache/
+
+# OS generated files
+.DS_Store
+Thumbs.db

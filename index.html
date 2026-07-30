@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Слово в шляпе — Настольная командная игра</title>
+  <meta name="description" content="Увлекательная мобильная и веб игра для компании «Слово в шляпе». Объясняй, показывай жестами и угадывай слова с друзьями!">
+  
+  <!-- Google Fonts: Plus Jakarta Sans & Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Canvas Confetti Overlay -->
+  <canvas id="confetti-canvas"></canvas>
+
+  <div class="app-container">
+    
+    <!-- 1. HOME SCREEN -->
+    <section id="screen-home" class="screen active">
+      <div class="screen-content center-content">
+        <div class="hero-badge">
+          <div class="hero-icon">🎩</div>
+        </div>
+        <h1 class="hero-title">Слово<br><span class="gradient-text">в шляпе</span></h1>
+        <p class="hero-subtitle">Объясняй, показывай жестами и угадывай вместе с друзьями</p>
+        
+        <div class="action-stack">
+          <button id="btn-start-game" class="btn btn-primary btn-large glow-effect">
+            <span class="btn-icon">▶</span> Новая игра
+          </button>
+          <button id="btn-open-rules" class="btn btn-secondary">
+            <span class="btn-icon">📖</span> Как играть
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. SETUP SCREEN -->
+    <section id="screen-setup" class="screen">
+      <header class="screen-header">
+        <button class="btn-back" id="btn-setup-back">← Назад</button>
+        <h2>Настройка партии</h2>
+      </header>
+
+      <div class="screen-content">
+        <div class="section-card">
+          <div class="section-header">
+            <h3>Команды и игроки</h3>
+            <p class="section-desc">Добавьте от 2 до 6 команд. В каждой минимум 2 игрока.</p>
+          </div>
+          
+          <div id="teams-container" class="teams-list">
+            <!-- Teams dynamically rendered here -->
+          </div>
+
+          <button id="btn-add-team" class="btn btn-outline btn-full">
+            <span>+</span> Добавить команду
+          </button>
+        </div>
+
+        <div class="section-card">
+          <h3>Параметры игры</h3>
+          
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Слов от каждого игрока</span>
+              <span class="setting-hint">Рекомендуется 5 слов</span>
+            </div>
+            <div class="stepper">
+              <button id="btn-words-minus" class="stepper-btn">-</button>
+              <span id="val-words-count" class="stepper-value">5</span>
+              <button id="btn-words-plus" class="stepper-btn">+</button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Длительность хода</span>
+              <span class="setting-hint">В секундах</span>
+            </div>
+            <div class="stepper">
+              <button id="btn-timer-minus" class="stepper-btn">-</button>
+              <span id="val-timer-sec" class="stepper-value">60 с</span>
+              <button id="btn-timer-plus" class="stepper-btn">+</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="screen-footer">
+        <button id="btn-proceed-words" class="btn btn-primary btn-large btn-full">
+          Перейти к вводу слов ➔
+        </button>
+      </footer>
+    </section>
+
+    <!-- 3. WORD ENTRY SCREEN -->
+    <section id="screen-word-entry" class="screen">
+      <header class="screen-header">
+        <h2>Сбор слов в шляпу</h2>
+        <div class="progress-bar-container">
+          <div id="word-entry-progress" class="progress-bar-fill"></div>
+        </div>
+      </header>
+
+      <div class="screen-content">
+        <!-- Privacy Cover Shield -->
+        <div id="privacy-shield" class="privacy-card">
+          <div class="privacy-icon">🔒</div>
+          <h3 id="privacy-player-name">Игрок</h3>
+          <p class="privacy-desc">Возьмите устройство. Остальным участникам смотреть запрещено!</p>
+          <button id="btn-reveal-entry" class="btn btn-primary glow-effect">
+            Я готов ввести слова
+          </button>
+        </div>
+
+        <!-- Inputs Form (Hidden by default until revealed) -->
+        <div id="words-form-container" class="words-form hidden">
+          <div class="player-turn-badge">
+            <span id="entry-current-player-name" class="player-name">Игрок</span>
+            <span id="entry-current-team-name" class="team-badge">Команда</span>
+          </div>
+
+          <p class="form-instruction">Придумывайте существительные, персонажей, профессии или курьёзные термины:</p>
+
+          <div id="word-inputs-list" class="inputs-stack">
+            <!-- Dynamic text inputs -->
+          </div>
+
+          <button id="btn-submit-words" class="btn btn-primary btn-large btn-full glow-effect">
+            <span id="submit-words-label">Передать устройство</span> ➔
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. ROUND INTRO SCREEN -->
+    <section id="screen-round-intro" class="screen">
+      <div class="screen-content center-content">
+        <div id="round-badge" class="round-badge">РАУНД 1 из 3</div>
+        <h2 id="round-title" class="round-title">Объяснение словами</h2>
+        
+        <div class="round-desc-card">
+          <p id="round-description">Объясняйте значение карточки любыми словами, но не называйте само слово и однокоренные слова.</p>
+        </div>
+
+        <div class="active-turn-card">
+          <div id="intro-total-words-badge" class="total-words-badge">🎩 В шляпе: 0 слов</div>
+          <span class="active-label">Сейчас ходит</span>
+          <h3 id="intro-team-name" class="active-team">Команда 1</h3>
+          <p id="intro-explainer-name" class="active-player">Объясняет: Игрок 1</p>
+        </div>
+
+        <div class="mini-scoreboard">
+          <h4>Текущие очки</h4>
+          <div id="intro-scoreboard-list" class="mini-score-list"></div>
+        </div>
+
+        <button id="btn-start-turn" class="btn btn-primary btn-large btn-full glow-effect">
+          ⏱ Начать ход
+        </button>
+      </div>
+    </section>
+
+    <!-- 5. TURN SCREEN (SWIPEABLE CARD + TIMER) -->
+    <section id="screen-turn" class="screen">
+      <div class="turn-header">
+        <!-- Circular Animated SVG Timer -->
+        <div class="timer-widget">
+          <svg class="timer-svg" viewBox="0 0 100 100">
+            <circle class="timer-bg-circle" cx="50" cy="50" r="44"></circle>
+            <circle id="timer-progress-circle" class="timer-progress" cx="50" cy="50" r="44" stroke-dasharray="276.46" stroke-dashoffset="0"></circle>
+          </svg>
+          <div id="timer-text" class="timer-number">60</div>
+        </div>
+
+        <div class="turn-meta">
+          <span id="turn-active-team" class="turn-team-name">Команда</span>
+          <span id="turn-cards-left" class="cards-left-badge">В шляпе: 0 из 0</span>
+        </div>
+      </div>
+
+      <div class="screen-content center-content card-arena">
+        <!-- Interactive Swipeable Card Stack -->
+        <div class="card-stack-wrapper">
+          <div id="swipe-card" class="swipe-card">
+            <div id="card-badge-guess" class="swipe-indicator indicator-guess">УГАДАНО +1</div>
+            <div id="card-badge-skip" class="swipe-indicator indicator-skip">ПРОПУСТИТЬ</div>
+            
+            <div class="card-content">
+              <div class="card-hat-icon">🎩</div>
+              <div id="card-word-value" class="word-text">Слово</div>
+              <div class="card-hint-text">← Свайп вправо: Угадано | Свайп влево: Пропустить →</div>
+            </div>
+          </div>
+          <div class="card-shadow shadow-1"></div>
+          <div class="card-shadow shadow-2"></div>
+        </div>
+
+        <div class="turn-score-counter">
+          Угадано за этот ход: <strong id="turn-guessed-count">0</strong>
+        </div>
+      </div>
+
+      <footer class="turn-actions">
+        <button id="btn-skip-card" class="btn btn-secondary btn-action-skip">
+          <span>↪</span> Пропустить
+        </button>
+        <button id="btn-guess-card" class="btn btn-success btn-action-guess glow-success">
+          <span>✓</span> Угадано
+        </button>
+      </footer>
+    </section>
+
+    <!-- 6. ROUND RESULTS SCREEN -->
+    <section id="screen-round-results" class="screen">
+      <div class="screen-content center-content">
+        <div class="flag-icon">🏁</div>
+        <h2 id="round-result-title">Раунд 1 завершён!</h2>
+        <p id="round-result-subtitle" class="hero-subtitle">Все слова в шляпе угаданы!</p>
+
+        <div class="results-card">
+          <h3>Результаты раунда</h3>
+          <div id="round-scores-list" class="leaderboard-list"></div>
+        </div>
+
+        <button id="btn-next-round-step" class="btn btn-primary btn-large btn-full glow-effect">
+          Следующий раунд ➔
+        </button>
+      </div>
+    </section>
+
+    <!-- 7. GAME RESULTS SCREEN -->
+    <section id="screen-game-results" class="screen">
+      <div class="screen-content center-content">
+        <div class="trophy-badge">🏆</div>
+        <h2 class="hero-title">Победители</h2>
+        <h3 id="winner-team-name" class="winner-name">Команда Победитель</h3>
+        <p id="winner-total-score" class="winner-score">0 очков</p>
+
+        <div class="final-leaderboard-card">
+          <h3>Итоговый рейтинг</h3>
+          <div id="final-ranking-list" class="final-ranking-list"></div>
+        </div>
+
+        <button id="btn-restart-game" class="btn btn-primary btn-large btn-full glow-effect">
+          🏠 На главный экран
+        </button>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- RULES MODAL -->
+  <div id="modal-rules" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Правила игры «Слово в шляпе»</h3>
+        <button id="btn-close-rules" class="btn-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="rule-item">
+          <div class="rule-num">1</div>
+          <div class="rule-text">
+            <strong>Количество слов</strong>
+            <p>Если 6 человек ввели по 5 слов — в шляпе ровно 30 слов. Раунд длится ровно до тех пор, пока все 30 слов не будут угаданы!</p>
+          </div>
+        </div>
+        <div class="rule-item">
+          <div class="rule-num">2</div>
+          <div class="rule-text">
+            <strong>Раунд 1: Объяснение словами</strong>
+            <p>Объясняйте значение карточки любыми фразами, не называя само слово и однокоренные понятия.</p>
+          </div>
+        </div>
+        <div class="rule-item">
+          <div class="rule-num">3</div>
+          <div class="rule-text">
+            <strong>Раунд 2: Пантомима</strong>
+            <p>Показывайте те же 30 слов жестами и мимикой без звуков.</p>
+          </div>
+        </div>
+        <div class="rule-item">
+          <div class="rule-num">4</div>
+          <div class="rule-text">
+            <strong>Раунд 3: Одно слово</strong>
+            <p>Те же 30 слов! Но теперь разрешено сказать ровно одно слово-подсказку.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
