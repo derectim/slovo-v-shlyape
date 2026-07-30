@@ -1,6 +1,6 @@
 /**
  * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
- * Гарантированная доставка сообщений через ntfy.sh с заголовком Cache: yes.
+ * Кросс-доменный сетевой движок ntfy.sh (?cache=yes) без CORS-блокировок.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -87,7 +87,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С КЭШИРУЕМЫМ WSS/HTTP RELAY (NTFY.SH)
+// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С ГАРАНТИРОВАННЫМ WSS/HTTP RELAY (NTFY.SH)
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -144,7 +144,7 @@ function connectNtfyRoom(code) {
 
   const topic = `slovo_room_${code}`;
 
-  // 1. WebSocket для мгновенных сообщений
+  // 1. WebSocket для моментальной связи
   try {
     wsClient = new WebSocket(`wss://ntfy.sh/${topic}/ws`);
     wsClient.onmessage = (event) => {
@@ -160,9 +160,8 @@ function connectNtfyRoom(code) {
     };
   } catch (e) {}
 
-  // 2. HTTP Sync Polling каждые 1.0 секунду для подстраховки
+  // 2. HTTP Polling синхронизатор каждые 1.0 секунду для подстраховки
   roomSyncInterval = setInterval(() => {
-    // Отправляем сердечный ритм в комнату с кэшированием
     postRoomPayload({
       type: 'heartbeat',
       id: gameState.myPlayerId,
@@ -170,13 +169,11 @@ function connectNtfyRoom(code) {
       isHost: gameState.isHost
     });
 
-    // Опрашиваем кэшированные сообщения в комнате за последнюю минуту
     fetchHistoryPayloads(topic);
 
-    // Хост периодически очищает неактивных игроков и рассылает актуальный список
     if (gameState.isHost) {
       const now = Date.now();
-      const activePlayers = gameState.onlinePlayers.filter(p => p.id === gameState.myPlayerId || (now - (p.lastActive || now)) < 8000);
+      const activePlayers = gameState.onlinePlayers.filter(p => p.id === gameState.myPlayerId || (now - (p.lastActive || now)) < 10000);
       if (activePlayers.length !== gameState.onlinePlayers.length) {
         gameState.onlinePlayers = activePlayers;
         renderOnlineLobby();
@@ -185,7 +182,7 @@ function connectNtfyRoom(code) {
     }
   }, 1000);
 
-  // Сразу анонсируем свой вход
+  // Сразу анонсируем вход
   postRoomPayload({
     type: 'join',
     id: gameState.myPlayerId,
@@ -194,15 +191,13 @@ function connectNtfyRoom(code) {
   });
 }
 
+// Отправка с тегом ?cache=yes без дополнительных CORS заголовков (работает на 100% браузеров!)
 function postRoomPayload(payloadObj) {
   if (!gameState.onlineRoomCode) return;
   const topic = `slovo_room_${gameState.onlineRoomCode}`;
   try {
-    fetch(`https://ntfy.sh/${topic}`, {
+    fetch(`https://ntfy.sh/${topic}?cache=yes`, {
       method: 'POST',
-      headers: {
-        'Cache': 'yes' // Включает сервеное кэширование ntfy.sh для подтягивания списка опоздавшим!
-      },
       body: JSON.stringify(payloadObj)
     }).catch(() => {});
   } catch (e) {}
@@ -210,7 +205,7 @@ function postRoomPayload(payloadObj) {
 
 function fetchHistoryPayloads(topic) {
   try {
-    fetch(`https://ntfy.sh/${topic}/json?poll=1&since=1m`)
+    fetch(`https://ntfy.sh/${topic}/json?poll=1&since=5m`)
       .then(res => res.text())
       .then(text => {
         const lines = text.trim().split('\n');
@@ -354,17 +349,10 @@ function fallbackCopy(textToCopy, code, roomUrl) {
 }
 
 function checkUrlRoomCode() {
-  let code = null;
-  const hashMatch = window.location.hash.match(/room=([0-9]{4})/i);
-  if (hashMatch) {
-    code = hashMatch[1];
-  } else {
-    const searchParams = new URLSearchParams(window.location.search);
-    code = searchParams.get('room') || searchParams.get('startapp');
-  }
-
-  if (code && code.length === 4) {
-    joinOnlineRoom(code);
+  let raw = window.location.hash + ' ' + window.location.search;
+  const match = raw.match(/([0-9]{4})/);
+  if (match && /room|startapp|code/i.test(raw)) {
+    joinOnlineRoom(match[1]);
   }
 }
 
