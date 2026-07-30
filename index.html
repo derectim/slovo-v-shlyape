@@ -47,16 +47,37 @@
       </header>
 
       <div class="screen-content">
-        <div class="section-card">
+        <!-- MODE SELECTOR TABS -->
+        <div class="mode-tabs">
+          <button id="tab-mode-random" class="tab-btn active">🎲 Случайные пары</button>
+          <button id="tab-mode-manual" class="tab-btn">✍️ Ручные команды</button>
+        </div>
+
+        <!-- MODE 1: RANDOM PAIRS (ENTER ALL PLAYERS FIRST) -->
+        <div id="view-mode-random" class="section-card">
           <div class="section-header">
-            <h3>Команды и игроки</h3>
-            <p class="section-desc">В каждой команде строго по 2 игрока.</p>
+            <h3>Список участников</h3>
+            <p class="section-desc">Введение все имена. Игра случайно сформирует пары по 2 человека.</p>
           </div>
 
-          <div class="auto-balance-actions">
-            <button id="btn-shuffle-players" class="btn btn-secondary btn-sm">
-              <span>🎲</span> Перемешать по парам
-            </button>
+          <div id="random-players-list" class="players-input-list">
+            <!-- Dynamic player name inputs -->
+          </div>
+
+          <button id="btn-add-random-player" class="btn btn-outline btn-full">
+            <span>+</span> Добавить участника
+          </button>
+
+          <button id="btn-shuffle-pairs-action" class="btn btn-secondary btn-full glow-effect" style="margin-top: 10px;">
+            <span>🎲</span> Перемешать по парам
+          </button>
+        </div>
+
+        <!-- MODE 2: MANUAL TEAMS -->
+        <div id="view-mode-manual" class="section-card hidden">
+          <div class="section-header">
+            <h3>Команды (по 2 человека)</h3>
+            <p class="section-desc">Настройте состав каждой пары вручную.</p>
           </div>
           
           <div id="teams-container" class="teams-list">
@@ -68,6 +89,7 @@
           </button>
         </div>
 
+        <!-- GAME PARAMETERS -->
         <div class="section-card">
           <h3>Параметры игры</h3>
           
@@ -273,7 +295,7 @@
           <div class="rule-num">1</div>
           <div class="rule-text">
             <strong>Формирование команд</strong>
-            <p>В каждой команде играет ровно 2 человека.</p>
+            <p>В каждой команде играет ровно 2 человека. Вы можете сформировать пары случайно или вручную.</p>
           </div>
         </div>
         <div class="rule-item">

@@ -23,6 +23,8 @@ const ROUNDS = [
 
 // Состояние Игры (Game State)
 let gameState = {
+  currentMode: 'random', // 'random' или 'manual'
+  rawPlayerNames: ['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4'],
   teams: [
     { name: 'Команда 1', playerNames: ['Игрок 1', 'Игрок 2'], roundScores: [0, 0, 0], explainerCursor: 0 },
     { name: 'Команда 2', playerNames: ['Игрок 3', 'Игрок 4'], roundScores: [0, 0, 0], explainerCursor: 0 }
@@ -64,10 +66,102 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 1. НАСТРОЙКА ИГРЫ И СТРОГИЕ ПАРЫ ПО 2 ИГРОКА (SETUP & PAIRS)
+// 1. НАСТРОЙКА ИГРЫ (РЕЖИМ 1: СЛУЧАЙНЫЕ ПАРЫ | РЕЖИМ 2: РУЧНЫЕ КОМАНДЫ)
 // --------------------------------------------------------------------------
 
-function renderSetupTeams() {
+function switchSetupMode(mode) {
+  gameState.currentMode = mode;
+
+  const tabRandom = document.getElementById('tab-mode-random');
+  const tabManual = document.getElementById('tab-mode-manual');
+  const viewRandom = document.getElementById('view-mode-random');
+  const viewManual = document.getElementById('view-mode-manual');
+
+  if (mode === 'random') {
+    tabRandom.classList.add('active');
+    tabManual.classList.remove('active');
+    viewRandom.classList.remove('hidden');
+    viewManual.classList.add('hidden');
+    renderRandomPlayers();
+  } else {
+    tabManual.classList.add('active');
+    tabRandom.classList.remove('active');
+    viewManual.classList.remove('hidden');
+    viewRandom.classList.add('hidden');
+    renderManualTeams();
+  }
+}
+
+// РЕЖИМ 1: РЕНДЕР ПРОСТОГО СПИСКА УЧАСТНИКОВ
+function renderRandomPlayers() {
+  const container = document.getElementById('random-players-list');
+  if (!container) return;
+  container.innerHTML = '';
+
+  gameState.rawPlayerNames.forEach((name, idx) => {
+    const row = document.createElement('div');
+    row.className = 'player-row';
+    row.innerHTML = `
+      <input type="text" class="input-field" value="${escapeHtml(name)}" onchange="updateRawPlayerName(${idx}, this.value)">
+      ${gameState.rawPlayerNames.length > 4 ? `<button class="btn-icon-only" onclick="removeRawPlayer(${idx})">✕</button>` : ''}
+    `;
+    container.appendChild(row);
+  });
+}
+
+function updateRawPlayerName(idx, val) {
+  if (val.trim()) gameState.rawPlayerNames[idx] = val.trim();
+}
+
+function addRawPlayer() {
+  const count = gameState.rawPlayerNames.length + 1;
+  gameState.rawPlayerNames.push(`Игрок ${count}`);
+  renderRandomPlayers();
+}
+
+function removeRawPlayer(idx) {
+  if (gameState.rawPlayerNames.length > 4) {
+    gameState.rawPlayerNames.splice(idx, 1);
+    renderRandomPlayers();
+  }
+}
+
+// Перемешать простой список участников по парам
+function shuffleRawPairs() {
+  const valid = gameState.rawPlayerNames.map(n => n.trim()).filter(n => n.length > 0);
+  if (valid.length < 4) {
+    alert('Минимум 4 участника для игры командами!');
+    return;
+  }
+
+  // Если нечётное — добавим 1 игрока
+  if (valid.length % 2 !== 0) {
+    valid.push(`Игрок ${valid.length + 1}`);
+  }
+
+  // Перемешивание Fisher-Yates
+  for (let i = valid.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [valid[i], valid[j]] = [valid[j], valid[i]];
+  }
+
+  // Формируем команды по 2 человека
+  gameState.teams = [];
+  for (let i = 0; i < valid.length; i += 2) {
+    const teamNum = (i / 2) + 1;
+    gameState.teams.push({
+      name: `Команда ${teamNum}`,
+      playerNames: [valid[i], valid[i + 1]],
+      roundScores: [0, 0, 0],
+      explainerCursor: 0
+    });
+  }
+
+  alert(`🎉 Участники успешно распределены на ${gameState.teams.length} пары!`);
+}
+
+// РЕЖИМ 2: РЕНДЕР РУЧНЫХ КОМАНД (ПО 2 ИГРОКА)
+function renderManualTeams() {
   const container = document.getElementById('teams-container');
   if (!container) return;
   container.innerHTML = '';
@@ -79,7 +173,6 @@ function renderSetupTeams() {
     let playersHtml = team.playerNames.map((pName, pIdx) => `
       <div class="player-row">
         <input type="text" class="input-field" value="${escapeHtml(pName)}" onchange="updatePlayerName(${tIdx}, ${pIdx}, this.value)">
-        ${team.playerNames.length > 2 ? `<button class="btn-icon-only" onclick="removePlayer(${tIdx}, ${pIdx})">✕</button>` : ''}
       </div>
     `).join('');
 
@@ -90,7 +183,6 @@ function renderSetupTeams() {
       </div>
       <div class="players-list">
         ${playersHtml}
-        ${team.playerNames.length < 2 ? `<button class="btn-add-player" onclick="addPlayer(${tIdx})">+ Добавить игрока</button>` : ''}
       </div>
     `;
     container.appendChild(card);
@@ -109,21 +201,6 @@ function updatePlayerName(tIdx, pIdx, name) {
   if (name.trim()) gameState.teams[tIdx].playerNames[pIdx] = name.trim();
 }
 
-function addPlayer(tIdx) {
-  if (gameState.teams[tIdx].playerNames.length < 2) {
-    const count = gameState.teams[tIdx].playerNames.length + 1;
-    gameState.teams[tIdx].playerNames.push(`Игрок ${count}`);
-    renderSetupTeams();
-  }
-}
-
-function removePlayer(tIdx, pIdx) {
-  if (gameState.teams[tIdx].playerNames.length > 2) {
-    gameState.teams[tIdx].playerNames.splice(pIdx, 1);
-    renderSetupTeams();
-  }
-}
-
 function addTeam() {
   if (gameState.teams.length < 6) {
     const num = gameState.teams.length + 1;
@@ -133,42 +210,15 @@ function addTeam() {
       roundScores: [0, 0, 0],
       explainerCursor: 0
     });
-    renderSetupTeams();
+    renderManualTeams();
   }
 }
 
 function removeTeam(tIdx) {
   if (gameState.teams.length > 2) {
     gameState.teams.splice(tIdx, 1);
-    renderSetupTeams();
+    renderManualTeams();
   }
-}
-
-// Перемешать всех участников по парам (по 2 человека)
-function shufflePlayers() {
-  const allNames = gameState.teams.flatMap(t => t.playerNames).map(n => n.trim()).filter(n => n.length > 0);
-
-  // Перемешивание Fisher-Yates
-  for (let i = allNames.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [allNames[i], allNames[j]] = [allNames[j], allNames[i]];
-  }
-
-  // Пересобираем команды строго по 2 человека
-  gameState.teams = [];
-  for (let i = 0; i < allNames.length; i += 2) {
-    const teamNum = (i / 2) + 1;
-    const p1 = allNames[i];
-    const p2 = allNames[i + 1] || `Игрок ${i + 2}`;
-    gameState.teams.push({
-      name: `Команда ${teamNum}`,
-      playerNames: [p1, p2],
-      roundScores: [0, 0, 0],
-      explainerCursor: 0
-    });
-  }
-
-  renderSetupTeams();
 }
 
 // --------------------------------------------------------------------------
@@ -176,6 +226,11 @@ function shufflePlayers() {
 // --------------------------------------------------------------------------
 
 function startWordEntry() {
+  if (gameState.currentMode === 'random') {
+    // Автоматически формируем пары перед стартом, если не нажали вручную
+    shuffleRawPairs();
+  }
+
   gameState.wordEntryPlayerIndex = 0;
   gameState.allCards = [];
   renderWordEntryPlayer();
@@ -644,15 +699,21 @@ function triggerConfetti() {
 }
 
 // --------------------------------------------------------------------------
-// 8. ИНИЦИАЛИЗАЦИЯ И ИВЕНТЫ (БЕЗ БЛОКИРОВКИ ЗАГРУЗКИ)
+// 8. ИНИЦИАЛИЗАЦИЯ И ИВЕНТЫ
 // --------------------------------------------------------------------------
 
 function initApp() {
+  // Tabs
+  const tabRandom = document.getElementById('tab-mode-random');
+  const tabManual = document.getElementById('tab-mode-manual');
+  if (tabRandom) tabRandom.addEventListener('click', () => switchSetupMode('random'));
+  if (tabManual) tabManual.addEventListener('click', () => switchSetupMode('manual'));
+
   // Navigation & Buttons
   const btnStart = document.getElementById('btn-start-game');
   if (btnStart) {
     btnStart.addEventListener('click', () => {
-      renderSetupTeams();
+      switchSetupMode('random');
       showScreen('screen-setup');
     });
   }
@@ -678,10 +739,12 @@ function initApp() {
     });
   }
 
-  const btnShuffle = document.getElementById('btn-shuffle-players');
-  if (btnShuffle) {
-    btnShuffle.addEventListener('click', shufflePlayers);
-  }
+  // Random Mode Actions
+  const btnAddRandomPlayer = document.getElementById('btn-add-random-player');
+  if (btnAddRandomPlayer) btnAddRandomPlayer.addEventListener('click', addRawPlayer);
+
+  const btnShufflePairsAction = document.getElementById('btn-shuffle-pairs-action');
+  if (btnShufflePairsAction) btnShufflePairsAction.addEventListener('click', shuffleRawPairs);
 
   // Steppers
   const btnWM = document.getElementById('btn-words-minus');
@@ -783,7 +846,7 @@ function initApp() {
   initSwipeCard();
 }
 
-// Гарантированная инициализация независимо от типа загрузки браузера
+// Гарантированная инициализация
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initApp);
 } else {
