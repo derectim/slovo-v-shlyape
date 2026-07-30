@@ -28,7 +28,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/health') {
-      return jsonResponse({ ok: true, service: 'slovo-v-shlyape-realtime', version: '2.4.2' });
+      return jsonResponse({ ok: true, service: 'slovo-v-shlyape-realtime', version: '2.4.3' });
     }
 
     const match = url.pathname.match(/^\/rooms\/(\d{4})$/);
@@ -96,7 +96,7 @@ export class GameRoom {
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ playerId, name, isHost, connectedAt: Date.now() });
 
-    safeSend(server, { type: 'connected', playerId, isHost, version: '2.4.2' });
+    safeSend(server, { type: 'connected', playerId, isHost, version: '2.4.3' });
     this.broadcastPlayers();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -142,12 +142,25 @@ export class GameRoom {
 
     const envelope = { ...message, senderId: sender.playerId };
     if (!sender.isHost && message.type === 'submit_words') {
+      const validWords = Array.isArray(message.words)
+        && message.words.length > 0
+        && message.words.length <= 20
+        && message.words.every(word => typeof word === 'string' && word.trim().length > 0 && word.length <= 100);
+      if (!validWords) return;
       envelope.playerId = sender.playerId;
       envelope.name = sender.name;
+      safeSend(socket, {
+        type: 'submission_received',
+        submissionId: safeText(message.submissionId, 120)
+      });
     }
     for (const { socket: target, member } of this.getConnections()) {
       if (target === socket) continue;
-      if (sender.isHost && !member.isHost) safeSend(target, envelope);
+      if (sender.isHost && !member.isHost) {
+        if (!envelope.targetPlayerId || envelope.targetPlayerId === member.playerId) {
+          safeSend(target, envelope);
+        }
+      }
       if (!sender.isHost && member.isHost) safeSend(target, envelope);
     }
   }

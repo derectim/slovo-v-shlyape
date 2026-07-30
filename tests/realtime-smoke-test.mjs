@@ -45,10 +45,18 @@ const hostPlayers = await nextMessage(host, message => message.type === 'sync_pl
 assert.deepEqual(hostPlayers.players.map(player => player.id).sort(), ['guest-1', 'host-1']);
 
 const submissionPromise = nextMessage(host, message => message.type === 'submit_words');
-guest.send(JSON.stringify({ type: 'submit_words', playerId: 'spoofed', words: ['аист'] }));
+const receiptPromise = nextMessage(guest, message => message.type === 'submission_received');
+guest.send(JSON.stringify({
+  type: 'submit_words',
+  playerId: 'spoofed',
+  submissionId: 'submission-1',
+  words: ['аист']
+}));
 const submission = await submissionPromise;
+const receipt = await receiptPromise;
 assert.equal(submission.playerId, 'guest-1');
 assert.equal(submission.senderId, 'guest-1');
+assert.equal(receipt.submissionId, 'submission-1');
 
 const acceptedPromise = nextMessage(guest, message => message.type === 'words_accepted');
 host.send(JSON.stringify({ type: 'words_accepted', playerId: 'guest-1', submitted: 2, total: 2 }));
@@ -60,6 +68,16 @@ guest.send(JSON.stringify({ type: 'turn_action', action: 'start', actionId: 'act
 const action = await actionPromise;
 assert.equal(action.senderId, 'guest-1');
 assert.equal(action.action, 'start');
+
+const syncPromise = nextMessage(guest, message => message.type === 'game_sync');
+host.send(JSON.stringify({
+  type: 'game_sync',
+  targetPlayerId: 'guest-1',
+  phase: 'round_intro',
+  state: { teams: [], allCards: [], deck: [] }
+}));
+const sync = await syncPromise;
+assert.equal(sync.phase, 'round_intro');
 
 const startPromise = nextMessage(guest, message => message.type === 'start_game');
 host.send(JSON.stringify({ type: 'start_game', teams: [{ name: 'Команда' }] }));

@@ -33,7 +33,7 @@
 
 html, body {
   width: 100%;
-  height: 100%;
+  height: var(--app-height, 100dvh);
   margin: 0;
   padding: 0;
   background: var(--bg-gradient);
@@ -62,7 +62,7 @@ body {
 .app-container {
   width: 100%;
   max-width: 480px;
-  height: 100%;
+  height: var(--app-height, 100dvh);
   max-height: 920px;
   background: rgba(18, 12, 38, 0.85);
   backdrop-filter: blur(20px);
@@ -377,7 +377,7 @@ body {
   border-radius: var(--radius-sm);
   padding: 12px 14px;
   color: #FFF;
-  font-size: 15px;
+  font-size: 16px;
   font-family: var(--font-family);
   outline: none;
   transition: border-color 0.2s;
@@ -547,7 +547,7 @@ body {
 
 .turn-waiting-message {
   color: var(--text-muted);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   padding: 16px;
 }
@@ -981,6 +981,10 @@ body {
   display: flex;
   gap: 12px;
   margin-top: auto;
+  position: relative;
+  z-index: 30;
+  flex-shrink: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 @media (max-width: 519px), (pointer: coarse) {
@@ -1004,6 +1008,14 @@ body {
 
   .timer-progress {
     transition: stroke 0.2s ease;
+  }
+
+  .btn {
+    touch-action: manipulation;
+  }
+
+  .turn-actions .btn {
+    min-height: 58px;
   }
 }
 
