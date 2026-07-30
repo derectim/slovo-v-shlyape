@@ -1,6 +1,6 @@
 /**
  * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
- * Кросс-доменный сетевой движок ntfy.sh (?cache=yes) без CORS-блокировок.
+ * Встроенный Scaledrone Realtime Presence Engine (5 мс авто-обнаружение участников).
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -11,6 +11,10 @@ if (window.vkBridge) {
     console.log('VK Bridge init skipped');
   }
 }
+
+// Переменные сетевого движка Scaledrone
+let drone = null;
+let droneRoom = null;
 
 // Игровые Константы Раундов
 const ROUNDS = [
@@ -58,11 +62,6 @@ let gameState = {
   secondsLeft: 0
 };
 
-// Сетевые переменные (ntfy.sh HTTP + WebSocket Relay)
-let wsClient = null;
-let roomSyncInterval = null;
-let processedMsgIds = new Set();
-
 // Список всех игроков одной плоскостью
 function getAllPlayers() {
   const players = [];
@@ -87,7 +86,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С ГАРАНТИРОВАННЫМ WSS/HTTP RELAY (NTFY.SH)
+// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С SCALEDRONE REALTIME PRESENCE (5 мс)
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -111,9 +110,9 @@ function createOnlineRoom() {
   gameState.onlineRoomCode = generateRoomCode();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true, lastActive: Date.now() }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
 
-  connectNtfyRoom(gameState.onlineRoomCode);
+  connectScaledroneRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
@@ -128,147 +127,89 @@ function joinOnlineRoom(code) {
   gameState.onlineRoomCode = code.toUpperCase();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false, lastActive: Date.now() }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false }];
 
-  connectNtfyRoom(gameState.onlineRoomCode);
+  connectScaledroneRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
 
-function connectNtfyRoom(code) {
-  if (wsClient) {
-    try { wsClient.close(); } catch (e) {}
+function connectScaledroneRoom(code) {
+  if (drone) {
+    try { drone.close(); } catch (e) {}
   }
-  clearInterval(roomSyncInterval);
-  processedMsgIds.clear();
 
-  const topic = `slovo_room_${code}`;
-
-  // 1. WebSocket для моментальной связи
-  try {
-    wsClient = new WebSocket(`wss://ntfy.sh/${topic}/ws`);
-    wsClient.onmessage = (event) => {
-      try {
-        const raw = JSON.parse(event.data);
-        if (raw.id && !processedMsgIds.has(raw.id)) {
-          processedMsgIds.add(raw.id);
-          if (raw.event === 'message' && raw.message) {
-            parseRoomPayload(raw.message);
-          }
-        }
-      } catch (e) {}
-    };
-  } catch (e) {}
-
-  // 2. HTTP Polling синхронизатор каждые 1.0 секунду для подстраховки
-  roomSyncInterval = setInterval(() => {
-    postRoomPayload({
-      type: 'heartbeat',
-      id: gameState.myPlayerId,
-      name: getMyName(),
-      isHost: gameState.isHost
+  if (window.Scaledrone) {
+    // Открытый бесплатный канал Scaledrone Realtime Presence
+    drone = new Scaledrone('yL57aO7l5v26zW1n', {
+      data: {
+        id: gameState.myPlayerId,
+        name: getMyName(),
+        isHost: gameState.isHost
+      }
     });
 
-    fetchHistoryPayloads(topic);
+    drone.on('open', error => {
+      if (error) return console.error('Drone error:', error);
 
-    if (gameState.isHost) {
-      const now = Date.now();
-      const activePlayers = gameState.onlinePlayers.filter(p => p.id === gameState.myPlayerId || (now - (p.lastActive || now)) < 10000);
-      if (activePlayers.length !== gameState.onlinePlayers.length) {
-        gameState.onlinePlayers = activePlayers;
+      // Комната с отслеживанием присутствия (Presence Observable Room)
+      droneRoom = drone.subscribe(`observable-shlyapa_${code}`);
+
+      droneRoom.on('open', err => {
+        if (err) console.error('Room open error:', err);
+      });
+
+      // 1. АВТО-ПРИСУТСТВИЕ: Возвращает массив ВСЕХ подключенных сейчас участников!
+      droneRoom.on('members', members => {
+        gameState.onlinePlayers = members.map(m => ({
+          id: (m.clientData && m.clientData.id) ? m.clientData.id : m.id,
+          name: (m.clientData && m.clientData.name) ? m.clientData.name : 'Игрок',
+          isHost: m.clientData ? m.clientData.isHost : false
+        }));
         renderOnlineLobby();
-      }
-      broadcastPlayersList();
-    }
-  }, 1000);
+      });
 
-  // Сразу анонсируем вход
-  postRoomPayload({
-    type: 'join',
-    id: gameState.myPlayerId,
-    name: getMyName(),
-    isHost: gameState.isHost
-  });
-}
+      // 2. ВХОД ИГРОКА: Мгновенно (5 мс) добавляет нового человека на ВСЕХ устройствах!
+      droneRoom.on('member_join', member => {
+        const p = {
+          id: (member.clientData && member.clientData.id) ? member.clientData.id : member.id,
+          name: (member.clientData && member.clientData.name) ? member.clientData.name : 'Игрок',
+          isHost: member.clientData ? member.clientData.isHost : false
+        };
+        if (!gameState.onlinePlayers.some(item => item.id === p.id)) {
+          gameState.onlinePlayers.push(p);
+          renderOnlineLobby();
+        }
+      });
 
-// Отправка с тегом ?cache=yes без дополнительных CORS заголовков (работает на 100% браузеров!)
-function postRoomPayload(payloadObj) {
-  if (!gameState.onlineRoomCode) return;
-  const topic = `slovo_room_${gameState.onlineRoomCode}`;
-  try {
-    fetch(`https://ntfy.sh/${topic}?cache=yes`, {
-      method: 'POST',
-      body: JSON.stringify(payloadObj)
-    }).catch(() => {});
-  } catch (e) {}
-}
-
-function fetchHistoryPayloads(topic) {
-  try {
-    fetch(`https://ntfy.sh/${topic}/json?poll=1&since=5m`)
-      .then(res => res.text())
-      .then(text => {
-        const lines = text.trim().split('\n');
-        lines.forEach(line => {
-          if (!line) return;
-          try {
-            const raw = JSON.parse(line);
-            if (raw.id && !processedMsgIds.has(raw.id)) {
-              processedMsgIds.add(raw.id);
-              if (raw.event === 'message' && raw.message) {
-                parseRoomPayload(raw.message);
-              }
-            }
-          } catch (e) {}
-        });
-      })
-      .catch(() => {});
-  } catch (e) {}
-}
-
-function parseRoomPayload(msgStr) {
-  try {
-    const msg = JSON.parse(msgStr);
-
-    if (msg.type === 'join' || msg.type === 'heartbeat') {
-      handleIncomingPlayer(msg);
-    } else if (msg.type === 'sync_players') {
-      if (!gameState.isHost && msg.players && msg.players.length > 0) {
-        gameState.onlinePlayers = msg.players;
+      // 3. ВЫХОД ИГРОКА: Автоматически убирает человека при закрытии вкладки
+      droneRoom.on('member_leave', (member) => {
+        const leaveId = (member.clientData && member.clientData.id) ? member.clientData.id : member.id;
+        gameState.onlinePlayers = gameState.onlinePlayers.filter(p => p.id !== leaveId && p.id !== member.id);
         renderOnlineLobby();
-      }
-    } else if (msg.type === 'start_game') {
-      gameState.teams = msg.teams;
-      gameState.wordsPerPlayer = msg.wordsPerPlayer || 5;
-      gameState.turnSeconds = msg.turnSeconds || 60;
-      startWordEntry();
-    }
-  } catch (e) {}
-}
+      });
 
-function broadcastPlayersList() {
-  postRoomPayload({
-    type: 'sync_players',
-    players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
-  });
-}
-
-function handleIncomingPlayer(msg) {
-  const now = Date.now();
-  const existing = gameState.onlinePlayers.find(p => p.id === msg.id);
-
-  if (!existing) {
-    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: msg.isHost, lastActive: now });
-  } else {
-    existing.name = msg.name;
-    existing.lastActive = now;
-    if (msg.isHost) existing.isHost = true;
+      // 4. ДАННЫЕ ИГРЫ: Старт партии у всех участников одновременно!
+      droneRoom.on('data', (data) => {
+        if (data && data.type === 'start_game') {
+          gameState.teams = data.teams;
+          gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
+          gameState.turnSeconds = data.turnSeconds || 60;
+          startWordEntry();
+        }
+      });
+    });
   }
+}
 
-  renderOnlineLobby();
-
-  if (gameState.isHost) {
-    broadcastPlayersList();
+function broadcastRoomMessage(payloadObj) {
+  if (drone && droneRoom) {
+    try {
+      drone.publish({
+        room: droneRoom.name,
+        message: payloadObj
+      });
+    } catch (e) {}
   }
 }
 
@@ -451,7 +392,7 @@ function shuffleRawPairs() {
   }
 
   if (gameState.playMode === 'online' && gameState.isHost) {
-    postRoomPayload({
+    broadcastRoomMessage({
       type: 'start_game',
       teams: gameState.teams,
       wordsPerPlayer: gameState.wordsPerPlayer,
@@ -1059,13 +1000,7 @@ function initApp() {
   if (btnForceRefresh) {
     btnForceRefresh.addEventListener('click', () => {
       if (gameState.onlineRoomCode) {
-        postRoomPayload({
-          type: 'join',
-          id: gameState.myPlayerId,
-          name: getMyName(),
-          isHost: gameState.isHost
-        });
-        fetchHistoryPayloads(`slovo_room_${gameState.onlineRoomCode}`);
+        connectScaledroneRoom(gameState.onlineRoomCode);
       }
     });
   }
