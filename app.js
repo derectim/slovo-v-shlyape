@@ -69,6 +69,7 @@ function showScreen(screenId) {
 
 function renderSetupTeams() {
   const container = document.getElementById('teams-container');
+  if (!container) return;
   container.innerHTML = '';
 
   gameState.teams.forEach((team, tIdx) => {
@@ -398,21 +399,23 @@ function startTimer() {
   const timerText = document.getElementById('timer-text');
   const totalCircleLen = 276.46; // 2 * PI * 44
 
-  timerWidget.classList.remove('warning', 'danger');
+  if (timerWidget) timerWidget.classList.remove('warning', 'danger');
 
   gameState.timerInterval = setInterval(() => {
     gameState.secondsLeft -= 1;
-    timerText.textContent = gameState.secondsLeft;
+    if (timerText) timerText.textContent = gameState.secondsLeft;
 
     const progressRatio = gameState.secondsLeft / gameState.turnSeconds;
     const dashOffset = totalCircleLen * (1 - progressRatio);
-    timerCircle.style.strokeDashoffset = dashOffset;
+    if (timerCircle) timerCircle.style.strokeDashoffset = dashOffset;
 
-    if (gameState.secondsLeft <= 15 && gameState.secondsLeft > 10) {
-      timerWidget.classList.add('warning');
-    } else if (gameState.secondsLeft <= 10) {
-      timerWidget.classList.remove('warning');
-      timerWidget.classList.add('danger');
+    if (timerWidget) {
+      if (gameState.secondsLeft <= 15 && gameState.secondsLeft > 10) {
+        timerWidget.classList.add('warning');
+      } else if (gameState.secondsLeft <= 10) {
+        timerWidget.classList.remove('warning');
+        timerWidget.classList.add('danger');
+      }
     }
 
     if (gameState.secondsLeft <= 0) {
@@ -469,14 +472,14 @@ function handleDragMove(e) {
   const skipBadge = document.getElementById('card-badge-skip');
 
   if (currentX > 30) {
-    guessBadge.style.opacity = Math.min(currentX / 100, 1);
-    skipBadge.style.opacity = 0;
+    if (guessBadge) guessBadge.style.opacity = Math.min(currentX / 100, 1);
+    if (skipBadge) skipBadge.style.opacity = 0;
   } else if (currentX < -30) {
-    skipBadge.style.opacity = Math.min(Math.abs(currentX) / 100, 1);
-    guessBadge.style.opacity = 0;
+    if (skipBadge) skipBadge.style.opacity = Math.min(Math.abs(currentX) / 100, 1);
+    if (guessBadge) guessBadge.style.opacity = 0;
   } else {
-    guessBadge.style.opacity = 0;
-    skipBadge.style.opacity = 0;
+    if (guessBadge) guessBadge.style.opacity = 0;
+    if (skipBadge) skipBadge.style.opacity = 0;
   }
 }
 
@@ -641,85 +644,148 @@ function triggerConfetti() {
 }
 
 // --------------------------------------------------------------------------
-// 8. ИНИЦИАЛИЗАЦИЯ И ИВЕНТЫ
+// 8. ИНИЦИАЛИЗАЦИЯ И ИВЕНТЫ (БЕЗ БЛОКИРОВКИ ЗАГРУЗКИ)
 // --------------------------------------------------------------------------
 
-document.addEventListener('DOMContentLoaded', () => {
+function initApp() {
   // Navigation & Buttons
-  document.getElementById('btn-start-game').addEventListener('click', () => {
-    renderSetupTeams();
-    showScreen('screen-setup');
-  });
+  const btnStart = document.getElementById('btn-start-game');
+  if (btnStart) {
+    btnStart.addEventListener('click', () => {
+      renderSetupTeams();
+      showScreen('screen-setup');
+    });
+  }
 
-  document.getElementById('btn-setup-back').addEventListener('click', () => {
-    showScreen('screen-home');
-  });
+  const btnSetupBack = document.getElementById('btn-setup-back');
+  if (btnSetupBack) {
+    btnSetupBack.addEventListener('click', () => {
+      showScreen('screen-home');
+    });
+  }
 
-  document.getElementById('btn-open-rules').addEventListener('click', () => {
-    document.getElementById('modal-rules').classList.remove('hidden');
-  });
+  const btnOpenRules = document.getElementById('btn-open-rules');
+  if (btnOpenRules) {
+    btnOpenRules.addEventListener('click', () => {
+      document.getElementById('modal-rules').classList.remove('hidden');
+    });
+  }
 
-  document.getElementById('btn-close-rules').addEventListener('click', () => {
-    document.getElementById('modal-rules').classList.add('hidden');
-  });
+  const btnCloseRules = document.getElementById('btn-close-rules');
+  if (btnCloseRules) {
+    btnCloseRules.addEventListener('click', () => {
+      document.getElementById('modal-rules').classList.add('hidden');
+    });
+  }
 
-  document.getElementById('btn-shuffle-players').addEventListener('click', shufflePlayers);
+  const btnShuffle = document.getElementById('btn-shuffle-players');
+  if (btnShuffle) {
+    btnShuffle.addEventListener('click', shufflePlayers);
+  }
 
   // Steppers
-  document.getElementById('btn-words-minus').addEventListener('click', () => {
-    if (gameState.wordsPerPlayer > 3) {
-      gameState.wordsPerPlayer -= 1;
-      document.getElementById('val-words-count').textContent = gameState.wordsPerPlayer;
-    }
-  });
+  const btnWM = document.getElementById('btn-words-minus');
+  if (btnWM) {
+    btnWM.addEventListener('click', () => {
+      if (gameState.wordsPerPlayer > 3) {
+        gameState.wordsPerPlayer -= 1;
+        document.getElementById('val-words-count').textContent = gameState.wordsPerPlayer;
+      }
+    });
+  }
 
-  document.getElementById('btn-words-plus').addEventListener('click', () => {
-    if (gameState.wordsPerPlayer < 10) {
-      gameState.wordsPerPlayer += 1;
-      document.getElementById('val-words-count').textContent = gameState.wordsPerPlayer;
-    }
-  });
+  const btnWP = document.getElementById('btn-words-plus');
+  if (btnWP) {
+    btnWP.addEventListener('click', () => {
+      if (gameState.wordsPerPlayer < 10) {
+        gameState.wordsPerPlayer += 1;
+        document.getElementById('val-words-count').textContent = gameState.wordsPerPlayer;
+      }
+    });
+  }
 
-  document.getElementById('btn-timer-minus').addEventListener('click', () => {
-    if (gameState.turnSeconds > 30) {
-      gameState.turnSeconds -= 15;
-      document.getElementById('val-timer-sec').textContent = `${gameState.turnSeconds} с`;
-    }
-  });
+  const btnTM = document.getElementById('btn-timer-minus');
+  if (btnTM) {
+    btnTM.addEventListener('click', () => {
+      if (gameState.turnSeconds > 30) {
+        gameState.turnSeconds -= 15;
+        document.getElementById('val-timer-sec').textContent = `${gameState.turnSeconds} с`;
+      }
+    });
+  }
 
-  document.getElementById('btn-timer-plus').addEventListener('click', () => {
-    if (gameState.turnSeconds < 120) {
-      gameState.turnSeconds += 15;
-      document.getElementById('val-timer-sec').textContent = `${gameState.turnSeconds} с`;
-    }
-  });
+  const btnTP = document.getElementById('btn-timer-plus');
+  if (btnTP) {
+    btnTP.addEventListener('click', () => {
+      if (gameState.turnSeconds < 120) {
+        gameState.turnSeconds += 15;
+        document.getElementById('val-timer-sec').textContent = `${gameState.turnSeconds} с`;
+      }
+    });
+  }
 
-  document.getElementById('btn-add-team').addEventListener('click', addTeam);
+  const btnAddTeam = document.getElementById('btn-add-team');
+  if (btnAddTeam) {
+    btnAddTeam.addEventListener('click', addTeam);
+  }
 
-  document.getElementById('btn-proceed-words').addEventListener('click', () => {
-    startWordEntry();
-  });
+  const btnProceedWords = document.getElementById('btn-proceed-words');
+  if (btnProceedWords) {
+    btnProceedWords.addEventListener('click', () => {
+      startWordEntry();
+    });
+  }
 
-  document.getElementById('btn-reveal-entry').addEventListener('click', revealWordEntryForm);
-  document.getElementById('btn-submit-words').addEventListener('click', submitCurrentPlayerWords);
+  const btnReveal = document.getElementById('btn-reveal-entry');
+  if (btnReveal) {
+    btnReveal.addEventListener('click', revealWordEntryForm);
+  }
 
-  document.getElementById('btn-start-turn').addEventListener('click', startTurn);
+  const btnSubmitWords = document.getElementById('btn-submit-words');
+  if (btnSubmitWords) {
+    btnSubmitWords.addEventListener('click', submitCurrentPlayerWords);
+  }
 
-  document.getElementById('btn-guess-card').addEventListener('click', handleCardGuess);
-  document.getElementById('btn-skip-card').addEventListener('click', handleCardSkip);
+  const btnStartTurn = document.getElementById('btn-start-turn');
+  if (btnStartTurn) {
+    btnStartTurn.addEventListener('click', startTurn);
+  }
 
-  document.getElementById('btn-next-round-step').addEventListener('click', () => {
-    if (gameState.currentRoundIndex < ROUNDS.length - 1) {
-      startRound(gameState.currentRoundIndex + 1);
-    } else {
-      showFinalResults();
-    }
-  });
+  const btnGuess = document.getElementById('btn-guess-card');
+  if (btnGuess) {
+    btnGuess.addEventListener('click', handleCardGuess);
+  }
 
-  document.getElementById('btn-restart-game').addEventListener('click', () => {
-    showScreen('screen-home');
-  });
+  const btnSkip = document.getElementById('btn-skip-card');
+  if (btnSkip) {
+    btnSkip.addEventListener('click', handleCardSkip);
+  }
+
+  const btnNextRound = document.getElementById('btn-next-round-step');
+  if (btnNextRound) {
+    btnNextRound.addEventListener('click', () => {
+      if (gameState.currentRoundIndex < ROUNDS.length - 1) {
+        startRound(gameState.currentRoundIndex + 1);
+      } else {
+        showFinalResults();
+      }
+    });
+  }
+
+  const btnRestart = document.getElementById('btn-restart-game');
+  if (btnRestart) {
+    btnRestart.addEventListener('click', () => {
+      showScreen('screen-home');
+    });
+  }
 
   // Initialize Swiper
   initSwipeCard();
-});
+}
+
+// Гарантированная инициализация независимо от типа загрузки браузера
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
