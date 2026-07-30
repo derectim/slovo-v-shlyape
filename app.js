@@ -30,6 +30,8 @@ let processedTurnActionIds = new Set();
 let onlinePhase = 'lobby';
 let pendingTurnAction = null;
 let turnActionRetryTimer = null;
+let pendingHostStateMessage = null;
+let hostStateRetryTimer = null;
 let viewportRefreshTimer = null;
 
 const PLAYER_ID_STORAGE_KEY = 'slovo_hat_player_id_v1';
@@ -227,7 +229,71 @@ function generateRoomCode() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
+function isRoomSocketOpen() {
+  return Boolean(roomSocket && roomSocket.readyState === WebSocket.OPEN);
+}
+
+function ensureHostConnectionForAction(buttonId = null) {
+  if (gameState.playMode !== 'online' || !gameState.isHost) return true;
+  const button = buttonId ? document.getElementById(buttonId) : null;
+  if (pendingHostStateMessage) {
+    if (button) {
+      button.disabled = true;
+      button.textContent = '⏳ Сохраняем действие…';
+    }
+    return false;
+  }
+  if (isRoomSocketOpen()) return true;
+  setConnectionStatus('connecting', '● Восстанавливаем связь перед действием…');
+  if (button) {
+    button.disabled = true;
+    button.textContent = '⏳ Восстанавливаем связь…';
+  }
+  if (!reconnectTimer && gameState.onlineRoomCode) scheduleGuestReconnect(gameState.onlineRoomCode);
+  return false;
+}
+
+function sendHostStatePayload(payload) {
+  if (!gameState.isHost) return false;
+  const stateMessage = {
+    ...payload,
+    stateMessageId: payload.stateMessageId
+      || `${gameState.myPlayerId}_state_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+  };
+  pendingHostStateMessage = stateMessage;
+  onlineActionPending = true;
+  sendSocketPayload(stateMessage);
+  scheduleHostStateRetry();
+  return true;
+}
+
+function scheduleHostStateRetry() {
+  clearTimeout(hostStateRetryTimer);
+  if (!pendingHostStateMessage) return;
+  hostStateRetryTimer = setTimeout(trySendPendingHostStateMessage, 700);
+}
+
+function trySendPendingHostStateMessage() {
+  clearTimeout(hostStateRetryTimer);
+  hostStateRetryTimer = null;
+  if (!pendingHostStateMessage || gameState.playMode !== 'online' || !gameState.isHost) return;
+  sendSocketPayload(pendingHostStateMessage);
+  scheduleHostStateRetry();
+}
+
+function clearPendingHostStateMessage() {
+  clearTimeout(hostStateRetryTimer);
+  hostStateRetryTimer = null;
+  pendingHostStateMessage = null;
+  onlineActionPending = Boolean(pendingHostStateMessage);
+}
+
+function isCurrentPlayerInTeams() {
+  return getAllPlayers().some(player => player.id === gameState.myPlayerId);
+}
+
 function createOnlineRoom(forcedCode = null) {
+  clearPendingHostStateMessage();
   destroyPeerNetwork();
   gameState.playMode = 'online';
   gameState.isHost = true;
@@ -247,6 +313,7 @@ function joinOnlineRoom(code) {
     alert('Пожалуйста, введите 4-значный код комнаты!');
     return;
   }
+  clearPendingHostStateMessage();
   destroyPeerNetwork();
   gameState.playMode = 'online';
   gameState.isHost = false;
@@ -289,7 +356,9 @@ function destroyPeerNetwork() {
   hostWordSubmissions.clear();
   pendingWordSubmission = null;
   pendingTurnAction = null;
-  onlineActionPending = false;
+  onlineActionPending = Boolean(pendingHostStateMessage);
+  clearInterval(gameState.timerInterval);
+  gameState.timerInterval = null;
 
   if (roomSocket) {
     try { roomSocket.close(1000, 'Leaving room'); } catch (e) {}
@@ -299,7 +368,12 @@ function destroyPeerNetwork() {
 }
 
 function leaveOnlineRoom() {
+  clearPendingHostStateMessage();
   clearOnlineSession();
+  clearInterval(gameState.timerInterval);
+  gameState.timerInterval = null;
+  onlineTurnActive = false;
+  onlinePhase = 'lobby';
   gameState.playMode = 'local';
   gameState.isHost = false;
   gameState.onlineRoomCode = null;
@@ -367,6 +441,7 @@ function connectRoomSocket(code, isHost) {
     startRoomHeartbeat();
     trySendPendingWordSubmission();
     trySendPendingTurnAction();
+    trySendPendingHostStateMessage();
   });
 
   socket.addEventListener('message', event => {
@@ -428,10 +503,25 @@ function handleRoomSocketMessage(data, code, isHost) {
     submissionRetryTimer = null;
     hasSubmittedWords = true;
     showOnlineWordProgress(data.submitted || 0, data.total || gameState.onlinePlayers.length);
-  } else if (!isHost && data.type === 'submission_received'
+  } else if (data.type === 'submission_received'
     && pendingWordSubmission
     && data.submissionId === pendingWordSubmission.submissionId) {
-    showOnlineWordDelivered();
+    const deliveredSubmission = pendingWordSubmission;
+    pendingWordSubmission = null;
+    clearTimeout(submissionRetryTimer);
+    submissionRetryTimer = null;
+    hasSubmittedWords = true;
+    if (isHost) {
+      handleOnlineWordSubmission({ ...deliveredSubmission, type: 'submit_words' });
+      showOnlineWordProgress(hostWordSubmissions.size, getExpectedOnlinePlayerCount());
+    } else {
+      showOnlineWordDelivered();
+    }
+  } else if (data.type === 'submission_rejected') {
+    pendingWordSubmission = null;
+    clearTimeout(submissionRetryTimer);
+    submissionRetryTimer = null;
+    showOnlineSubmissionRejected(data.reason);
   } else if (!isHost && data.type === 'start_game') {
     gameState.teams = data.teams;
     gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
@@ -443,6 +533,13 @@ function handleRoomSocketMessage(data, code, isHost) {
     beginOnlineGame(data);
   } else if (isHost && data.type === 'turn_action') {
     handleOnlineTurnAction(data);
+  } else if (isHost && data.type === 'state_received'
+    && pendingHostStateMessage
+    && data.stateMessageId === pendingHostStateMessage.stateMessageId) {
+    clearPendingHostStateMessage();
+    if (onlinePhase === 'turn') renderSynchronizedTurn();
+    else if (onlinePhase === 'round_intro') renderRoundIntro();
+    else if (onlinePhase === 'round_results') showRoundResults();
   } else if (data.type === 'game_sync') {
     applyOnlineGameSync(data);
   } else if (!isHost && data.type === 'turn_started') {
@@ -509,6 +606,10 @@ function handleOnlineRoomSnapshot(data) {
           && Array.isArray(submission.words)
           && submission.words.length === gameState.wordsPerPlayer)
         .map(([playerId, submission]) => [playerId, submission.words]));
+    }
+    if (!isCurrentPlayerInTeams()) {
+      showUnassignedPlayerWaiting();
+      return;
     }
     startWordEntry();
     const submittedIds = Array.isArray(data.submittedPlayerIds) ? data.submittedPlayerIds : [];
@@ -581,8 +682,7 @@ function broadcastToPeers(payloadObj) {
 
 function handleOnlineWordSubmission(data) {
   if (!gameState.isHost || !data || !data.playerId || !Array.isArray(data.words)) return false;
-  const playerExists = getAllPlayers().some(player => player.id === data.playerId)
-    || gameState.onlinePlayers.some(player => player.id === data.playerId);
+  const playerExists = getAllPlayers().some(player => player.id === data.playerId);
   const words = data.words
     .map(word => typeof word === 'string' ? word.trim() : '')
     .filter(Boolean)
@@ -615,11 +715,13 @@ function getExpectedOnlinePlayerCount() {
 
 function completeOnlineWordCollectionIfReady() {
   if (!gameState.isHost) return false;
-  const total = getExpectedOnlinePlayerCount();
-  if (!total || hostWordSubmissions.size < total) return false;
+  const expectedPlayerIds = getAllPlayers().map(player => player.id).filter(Boolean);
+  const total = expectedPlayerIds.length;
+  if (!total || !expectedPlayerIds.every(playerId => hostWordSubmissions.has(playerId))) return false;
 
   gameState.allCards = [];
-  hostWordSubmissions.forEach((playerWords, playerId) => {
+  expectedPlayerIds.forEach(playerId => {
+    const playerWords = hostWordSubmissions.get(playerId) || [];
     playerWords.forEach(word => {
       gameState.allCards.push({
         id: `${playerId}_${Math.random().toString(36).slice(2, 9)}`,
@@ -663,10 +765,39 @@ function showOnlineWordDelivered() {
   if (description) description.textContent = 'Сервер получил слова. Ждём подтверждения ведущего…';
 }
 
+function showOnlineSubmissionRejected(reason) {
+  const title = document.getElementById('privacy-player-name');
+  const description = document.getElementById('privacy-description');
+  const revealButton = document.getElementById('btn-reveal-entry');
+  const wordsForm = document.getElementById('words-form-container');
+  const privacyShield = document.getElementById('privacy-shield');
+  if (privacyShield) privacyShield.classList.remove('hidden');
+  if (wordsForm) wordsForm.classList.add('hidden');
+  if (revealButton) revealButton.classList.add('hidden');
+  if (title) title.textContent = 'Слова не приняты';
+  if (description) description.textContent = reason === 'not_in_game'
+    ? 'Вы подключились после формирования команд и можете только наблюдать за этой партией.'
+    : 'Этап ввода слов уже завершён. Дождитесь начала раунда.';
+}
+
+function showUnassignedPlayerWaiting() {
+  const title = document.getElementById('privacy-player-name');
+  const description = document.getElementById('privacy-description');
+  const revealButton = document.getElementById('btn-reveal-entry');
+  const wordsForm = document.getElementById('words-form-container');
+  const privacyShield = document.getElementById('privacy-shield');
+  if (privacyShield) privacyShield.classList.remove('hidden');
+  if (wordsForm) wordsForm.classList.add('hidden');
+  if (revealButton) revealButton.classList.add('hidden');
+  if (title) title.textContent = 'Игра уже началась';
+  if (description) description.textContent = 'Вы не входите в состав команд этой партии. Можно наблюдать и присоединиться к следующей игре.';
+  showScreen('screen-word-entry');
+}
+
 function trySendPendingWordSubmission() {
   clearTimeout(submissionRetryTimer);
   submissionRetryTimer = null;
-  if (!pendingWordSubmission || gameState.playMode !== 'online' || gameState.isHost) return;
+  if (!pendingWordSubmission || gameState.playMode !== 'online') return;
 
   sendSocketPayload(pendingWordSubmission);
   submissionRetryTimer = setTimeout(trySendPendingWordSubmission, 700);
@@ -800,8 +931,13 @@ function renderOnlineLobby() {
   const startBtn = document.getElementById('btn-host-start-setup');
   if (startBtn) {
     if (gameState.isHost) {
+      const playerCount = gameState.onlinePlayers.length;
+      const canStart = playerCount >= 4 && playerCount % 2 === 0;
       startBtn.style.display = 'flex';
-      startBtn.textContent = `🎲 Перемешать ${gameState.onlinePlayers.length} игроков по парам и начать ➔`;
+      startBtn.disabled = !canStart;
+      startBtn.textContent = canStart
+        ? `🎲 Перемешать ${playerCount} игроков по парам и начать ➔`
+        : (playerCount < 4 ? `Нужно ещё ${4 - playerCount} игроков` : 'Нужно чётное количество игроков');
     } else {
       startBtn.style.display = 'none';
     }
@@ -855,14 +991,42 @@ function fallbackCopy(textToCopy, code, roomUrl) {
   alert(`📋 Ссылка на комнату ${code} скопирована в буфер обмена!\n\nОтправьте её друзьям в чат Telegram или VK!`);
 }
 
-function checkUrlRoomCode() {
-  let raw = window.location.hash + ' ' + window.location.search;
-  const match = raw.match(/([0-9]{4})/);
-  if (match && /room|startapp|code/i.test(raw)) {
-    joinOnlineRoom(match[1]);
-    return true;
+function extractRoomCodeFromLocation(hash = window.location.hash, search = window.location.search) {
+  const hashParams = new URLSearchParams(String(hash || '').replace(/^#/, ''));
+  const searchParams = new URLSearchParams(String(search || '').replace(/^\?/, ''));
+  const candidateKeys = [
+    'room',
+    'code',
+    'startapp',
+    'start_param',
+    'vk_start_param',
+    'tgWebAppStartParam'
+  ];
+
+  for (const params of [hashParams, searchParams]) {
+    for (const key of candidateKeys) {
+      const value = params.get(key);
+      if (!value) continue;
+      const match = String(value).match(/(?:room|code)?[_=-]?(\d{4})(?:\D|$)/i);
+      if (match) return match[1];
+    }
   }
-  return false;
+
+  const explicitHashMatch = String(hash || '').match(/(?:room|code)[_=-](\d{4})(?:\D|$)/i);
+  return explicitHashMatch ? explicitHashMatch[1] : null;
+}
+
+function checkUrlRoomCode() {
+  const roomCode = extractRoomCodeFromLocation();
+  if (!roomCode) return false;
+
+  const savedSession = readOnlineSession();
+  if (savedSession && savedSession.code === roomCode && savedSession.isHost) {
+    createOnlineRoom(roomCode);
+  } else {
+    joinOnlineRoom(roomCode);
+  }
+  return true;
 }
 
 function restoreSavedOnlineSession() {
@@ -940,6 +1104,7 @@ function removeRawPlayer(idx) {
 
 // Автоматическое распределение подключенных игроков по парам и старт игры
 function shuffleRawPairs() {
+  if (!ensureHostConnectionForAction('btn-host-start-setup')) return;
   let valid = [];
   if (gameState.playMode === 'online') {
     valid = gameState.onlinePlayers
@@ -953,6 +1118,11 @@ function shuffleRawPairs() {
 
   if (valid.length < 4) {
     alert('Минимум 4 участника для игры командами!');
+    return;
+  }
+
+  if (gameState.playMode === 'online' && valid.length % 2 !== 0) {
+    alert('Для онлайн-игры нужно чётное количество участников!');
     return;
   }
 
@@ -1156,10 +1326,10 @@ function submitCurrentPlayerWords() {
       words
     };
     if (gameState.isHost) {
-      hasSubmittedWords = true;
-      sendSocketPayload({ ...submission, type: 'store_host_words' });
-      handleOnlineWordSubmission(submission);
-      showOnlineWordProgress(hostWordSubmissions.size, getExpectedOnlinePlayerCount());
+      hasSubmittedWords = false;
+      pendingWordSubmission = { ...submission, type: 'store_host_words' };
+      showOnlineWordSending();
+      trySendPendingWordSubmission();
     } else {
       hasSubmittedWords = false;
       pendingWordSubmission = submission;
@@ -1201,7 +1371,7 @@ function startRound(roundIndex) {
 
   if (gameState.playMode === 'online' && gameState.isHost) {
     processedTurnActionIds.clear();
-    broadcastToPeers({ type: 'round_started', state: createOnlineGameSnapshot() });
+    sendHostStatePayload({ type: 'round_started', state: createOnlineGameSnapshot() });
   }
 }
 
@@ -1254,6 +1424,7 @@ function renderRoundIntro() {
 function startTurn() {
   if (gameState.playMode === 'online') {
     if (!isCurrentTurnController() || onlineTurnActive) return;
+    if (!ensureHostConnectionForAction('btn-start-turn')) return;
     const button = document.getElementById('btn-start-turn');
     if (button) {
       button.disabled = true;
@@ -1281,7 +1452,7 @@ function startOnlineTurnAuthoritative(acknowledgedActionId = null) {
   onlineTurnActive = true;
   onlinePhase = 'turn';
   onlineTurnDeadline = Date.now() + gameState.turnSeconds * 1000;
-  broadcastToPeers({
+  sendHostStatePayload({
     type: 'turn_started',
     state: createOnlineGameSnapshot(),
     deadline: onlineTurnDeadline,
@@ -1356,6 +1527,7 @@ function updateTurnUI() {
 function handleCardGuess() {
   if (gameState.playMode === 'online') {
     if (!onlineTurnActive || !isCurrentTurnController()) return;
+    if (!ensureHostConnectionForAction('btn-guess-card')) return;
     if (gameState.isHost) applyOnlineCardGuess();
     else sendOnlineTurnAction('guess');
     return;
@@ -1397,6 +1569,7 @@ function applyOnlineCardGuess(acknowledgedActionId = null) {
 function handleCardSkip() {
   if (gameState.playMode === 'online') {
     if (!onlineTurnActive || !isCurrentTurnController()) return;
+    if (!ensureHostConnectionForAction('btn-skip-card')) return;
     if (gameState.isHost) applyOnlineCardSkip();
     else sendOnlineTurnAction('skip');
     return;
@@ -1469,7 +1642,7 @@ function clearPendingTurnAction() {
   clearTimeout(turnActionRetryTimer);
   turnActionRetryTimer = null;
   pendingTurnAction = null;
-  onlineActionPending = false;
+  onlineActionPending = Boolean(pendingHostStateMessage);
 }
 
 function handleOnlineTurnAction(data) {
@@ -1485,7 +1658,7 @@ function handleOnlineTurnAction(data) {
 }
 
 function broadcastOnlineTurnState(acknowledgedActionId = null) {
-  broadcastToPeers({
+  sendHostStatePayload({
     type: 'turn_state',
     state: createOnlineGameSnapshot(),
     deadline: onlineTurnDeadline,
@@ -1512,7 +1685,7 @@ function finishTurn(roundCompleted = false, acknowledgedActionId = null) {
   gameState.activeTeamIndex = (gameState.activeTeamIndex + 1) % gameState.teams.length;
 
   if (gameState.playMode === 'online') {
-    broadcastToPeers({
+    sendHostStatePayload({
       type: 'turn_finished',
       state: createOnlineGameSnapshot(),
       roundCompleted,
@@ -1817,6 +1990,11 @@ function initApp() {
   const btnLocal = document.getElementById('btn-mode-local');
   if (btnLocal) {
     btnLocal.addEventListener('click', () => {
+      if (gameState.playMode === 'online') {
+        clearOnlineSession();
+        clearPendingHostStateMessage();
+        destroyPeerNetwork();
+      }
       gameState.playMode = 'local';
       switchSetupMode('random');
       showScreen('screen-setup');
@@ -1995,12 +2173,13 @@ function initApp() {
   if (btnNextRound) {
     btnNextRound.addEventListener('click', () => {
       if (gameState.playMode === 'online' && !gameState.isHost) return;
+      if (!ensureHostConnectionForAction('btn-next-round-step')) return;
       if (gameState.currentRoundIndex < ROUNDS.length - 1) {
         startRound(gameState.currentRoundIndex + 1);
       } else {
         if (gameState.playMode === 'online' && gameState.isHost) {
           onlinePhase = 'game_results';
-          broadcastToPeers({ type: 'game_finished', state: createOnlineGameSnapshot() });
+          sendHostStatePayload({ type: 'game_finished', state: createOnlineGameSnapshot() });
         }
         showFinalResults();
       }
@@ -2010,6 +2189,15 @@ function initApp() {
   const btnRestart = document.getElementById('btn-restart-game');
   if (btnRestart) {
     btnRestart.addEventListener('click', () => {
+      if (gameState.playMode === 'online') {
+        clearOnlineSession();
+        clearPendingHostStateMessage();
+        destroyPeerNetwork();
+        gameState.isHost = false;
+        gameState.onlineRoomCode = null;
+        gameState.onlinePlayers = [];
+        gameState.playMode = 'local';
+      }
       showScreen('screen-home');
     });
   }

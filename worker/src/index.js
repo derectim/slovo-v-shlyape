@@ -32,6 +32,11 @@ function isValidWords(words) {
     && words.every(word => typeof word === 'string' && word.trim().length > 0 && word.length <= 100);
 }
 
+function hasPlayerInTeams(teams, playerId) {
+  return Array.isArray(teams) && teams.some(team =>
+    Array.isArray(team?.playerIds) && team.playerIds.includes(playerId));
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -40,7 +45,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/health') {
-      return jsonResponse({ ok: true, service: 'slovo-v-shlyape-realtime', version: '2.5.0' });
+      return jsonResponse({ ok: true, service: 'slovo-v-shlyape-realtime', version: '2.5.1' });
     }
 
     const match = url.pathname.match(/^\/rooms\/(\d{4})$/);
@@ -137,7 +142,7 @@ export class GameRoom {
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ playerId, name, isHost, connectedAt: Date.now() });
 
-    safeSend(server, { type: 'connected', playerId, isHost, version: '2.5.0' });
+    safeSend(server, { type: 'connected', playerId, isHost, version: '2.5.1' });
     this.broadcastPlayers();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -169,16 +174,20 @@ export class GameRoom {
 
   async storeSubmission(playerId, name, words, submissionId) {
     const submissions = await this.getSubmissions();
+    const normalizedSubmissionId = safeText(submissionId, 120);
+    if (submissions[playerId]?.submissionId === normalizedSubmissionId) {
+      return { submissions, duplicate: true };
+    }
     submissions[playerId] = {
       playerId,
       name: safeText(name, 40),
       words: words.map(word => safeText(word, 100)),
-      submissionId: safeText(submissionId, 120),
+      submissionId: normalizedSubmissionId,
       updatedAt: Date.now()
     };
     await this.ctx.storage.put(SUBMISSIONS_KEY, submissions);
     await this.touchRoomMeta();
-    return submissions;
+    return { submissions, duplicate: false };
   }
 
   async sendRoomSnapshot(socket, isHost) {
@@ -263,11 +272,12 @@ export class GameRoom {
       phase,
       state: message.state,
       deadline: phase === 'turn' ? Number(message.deadline) || previous.deadline || 0 : 0,
-      acknowledgedActionId: message.acknowledgedActionId || previous.acknowledgedActionId || null
+      acknowledgedActionId: message.acknowledgedActionId || previous.acknowledgedActionId || null,
+      lastStateMessageId: safeText(message.stateMessageId, 120) || previous.lastStateMessageId || null
     });
 
-    if (phase === 'turn' && saved.deadline > Date.now()) {
-      await this.ctx.storage.setAlarm(saved.deadline);
+    if (phase === 'turn') {
+      await this.ctx.storage.setAlarm(saved.deadline > Date.now() ? saved.deadline : Date.now());
     } else {
       await this.ctx.storage.deleteAlarm();
     }
@@ -327,7 +337,11 @@ export class GameRoom {
       if (!isValidWords(message.words)) return;
       const game = await this.ctx.storage.get(GAME_KEY);
       if (!game || game.phase !== 'word_entry'
-        || message.words.length !== Number(game.wordsPerPlayer || 5)) return;
+        || message.words.length !== Number(game.wordsPerPlayer || 5)
+        || !hasPlayerInTeams(game.teams, sender.playerId)) {
+        safeSend(socket, { type: 'submission_rejected', reason: 'not_in_game' });
+        return;
+      }
       await this.storeSubmission(sender.playerId, sender.name, message.words, message.submissionId);
       safeSend(socket, {
         type: 'submission_received',
@@ -338,20 +352,47 @@ export class GameRoom {
 
     const envelope = { ...message, senderId: sender.playerId };
     if (!sender.isHost && message.type === 'submit_words') {
-      if (!isValidWords(message.words)) return;
+      if (!isValidWords(message.words)) {
+        safeSend(socket, { type: 'submission_rejected', reason: 'invalid_words' });
+        return;
+      }
       const game = await this.ctx.storage.get(GAME_KEY);
       if (!game || game.phase !== 'word_entry'
-        || message.words.length !== Number(game.wordsPerPlayer || 5)) return;
+        || message.words.length !== Number(game.wordsPerPlayer || 5)) {
+        safeSend(socket, { type: 'submission_rejected', reason: 'wrong_phase' });
+        return;
+      }
+      if (!hasPlayerInTeams(game.teams, sender.playerId)) {
+        safeSend(socket, { type: 'submission_rejected', reason: 'not_in_game' });
+        return;
+      }
       envelope.playerId = sender.playerId;
       envelope.name = sender.name;
-      await this.storeSubmission(sender.playerId, sender.name, message.words, message.submissionId);
+      const storedSubmission = await this.storeSubmission(
+        sender.playerId,
+        sender.name,
+        message.words,
+        message.submissionId
+      );
       safeSend(socket, {
         type: 'submission_received',
         submissionId: safeText(message.submissionId, 120)
       });
+      if (storedSubmission.duplicate) return;
     }
 
-    if (sender.isHost) await this.persistHostMessage(message);
+    if (sender.isHost) {
+      const stateMessageId = safeText(message.stateMessageId, 120);
+      if (stateMessageId) {
+        const existingGame = await this.ctx.storage.get(GAME_KEY);
+        if (existingGame?.lastStateMessageId === stateMessageId) {
+          safeSend(socket, { type: 'state_received', stateMessageId });
+          return;
+        }
+      }
+      await this.persistHostMessage(message);
+      if (stateMessageId) safeSend(socket, { type: 'state_received', stateMessageId });
+    }
 
     for (const { socket: target, member } of this.getConnections()) {
       if (target === socket) continue;

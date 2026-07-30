@@ -57,6 +57,18 @@ host.send(JSON.stringify({ type: 'start_game', teams, wordsPerPlayer: 1, turnSec
 const start = await startPromise;
 assert.equal(start.teams[0].name, 'Команда 1');
 
+const outsider = await openSocket(roomUrl(code, 'outsider-1', 'Опоздавший', 'guest'));
+const outsiderRejectedPromise = nextMessage(outsider, message => message.type === 'submission_rejected');
+const outsiderReachedHost = nextMessage(host, message => message.type === 'submit_words' && message.senderId === 'outsider-1', 800)
+  .then(() => true, () => false);
+outsider.send(JSON.stringify({
+  type: 'submit_words',
+  submissionId: 'submission-outsider',
+  words: ['лишнее']
+}));
+assert.equal((await outsiderRejectedPromise).reason, 'not_in_game');
+assert.equal(await outsiderReachedHost, false);
+
 const submissionPromise = nextMessage(host, message => message.type === 'submit_words');
 const receiptPromise = nextMessage(guest, message => message.type === 'submission_received');
 guest.send(JSON.stringify({
@@ -70,6 +82,19 @@ const receipt = await receiptPromise;
 assert.equal(submission.playerId, 'guest-1');
 assert.equal(submission.senderId, 'guest-1');
 assert.equal(receipt.submissionId, 'submission-guest');
+
+const duplicateReceiptPromise = nextMessage(guest, message =>
+  message.type === 'submission_received' && message.submissionId === 'submission-guest');
+const duplicateSubmissionReachedHost = nextMessage(host, message =>
+  message.type === 'submit_words' && message.submissionId === 'submission-guest', 800)
+  .then(() => true, () => false);
+guest.send(JSON.stringify({
+  type: 'submit_words',
+  submissionId: 'submission-guest',
+  words: ['аист']
+}));
+await duplicateReceiptPromise;
+assert.equal(await duplicateSubmissionReachedHost, false);
 
 const hostReceiptPromise = nextMessage(host, message => message.type === 'submission_received');
 host.send(JSON.stringify({ type: 'store_host_words', submissionId: 'submission-host', words: ['шляпа'] }));
@@ -108,8 +133,29 @@ const activeState = {
   turnGuessedCount: 0
 };
 const turnPromise = nextMessage(guest, message => message.type === 'turn_started');
-host.send(JSON.stringify({ type: 'turn_started', state: activeState, deadline: Date.now() + 5000 }));
+const turnStoredPromise = nextMessage(host, message => message.type === 'state_received');
+host.send(JSON.stringify({
+  type: 'turn_started',
+  state: activeState,
+  deadline: Date.now() + 5000,
+  stateMessageId: 'state-turn-1'
+}));
 await turnPromise;
+assert.equal((await turnStoredPromise).stateMessageId, 'state-turn-1');
+
+const duplicateStateStoredPromise = nextMessage(host, message =>
+  message.type === 'state_received' && message.stateMessageId === 'state-turn-1');
+const duplicateStateReachedGuest = nextMessage(guest, message =>
+  message.type === 'turn_started' && message.stateMessageId === 'state-turn-1', 800)
+  .then(() => true, () => false);
+host.send(JSON.stringify({
+  type: 'turn_started',
+  state: activeState,
+  deadline: Date.now() + 5000,
+  stateMessageId: 'state-turn-1'
+}));
+await duplicateStateStoredPromise;
+assert.equal(await duplicateStateReachedGuest, false);
 
 const actionPromise = nextMessage(host, message => message.type === 'turn_action' && message.actionId === 'action-1');
 guest.send(JSON.stringify({ type: 'turn_action', action: 'guess', actionId: 'action-1' }));
@@ -169,8 +215,8 @@ const missing = await openSocket(roomUrl(missingCode, 'missing-guest', 'Опоз
 const missingError = await nextMessage(missing, message => message.type === 'room_error');
 assert.equal(missingError.error, 'room_missing');
 
-for (const socket of [missing, collision, lateGuest, guest, host]) {
+for (const socket of [missing, collision, lateGuest, outsider, guest, host]) {
   try { socket.close(1000, 'Test complete'); } catch (_) {}
 }
 
-console.log('Realtime smoke test passed: persistence, reconnect, server timer and room validation.');
+console.log('Realtime smoke test passed: persistence, roster validation, retries, reconnect and server timer.');
