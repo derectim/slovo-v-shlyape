@@ -1055,6 +1055,21 @@ function initApp() {
     });
   }
 
+  const btnForceRefresh = document.getElementById('btn-force-refresh-lobby');
+  if (btnForceRefresh) {
+    btnForceRefresh.addEventListener('click', () => {
+      if (gameState.onlineRoomCode) {
+        postRoomPayload({
+          type: 'join',
+          id: gameState.myPlayerId,
+          name: getMyName(),
+          isHost: gameState.isHost
+        });
+        fetchHistoryPayloads(`slovo_room_${gameState.onlineRoomCode}`);
+      }
+    });
+  }
+
   // Tabs
   const tabRandom = document.getElementById('tab-mode-random');
   const tabManual = document.getElementById('tab-mode-manual');
