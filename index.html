@@ -11,11 +11,11 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <!-- Supabase Realtime JS SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <!-- Local PeerJS WebRTC P2P Bundle for Instant Direct Phone-to-PC Connection -->
+  <script src="peerjs.min.js?v=2.1.2"></script>
 
   <!-- Local VK Bridge Bundle -->
-  <script src="vk-bridge.js?v=2.1.1"></script>
+  <script src="vk-bridge.js?v=2.1.2"></script>
   <script>
     (function initVK() {
       function sendVKInit() {
@@ -37,7 +37,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=2.1.1">
+  <link rel="stylesheet" href="styles.css?v=2.1.2">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -124,7 +124,7 @@
 
         <div class="section-card">
           <h3>Подключённые игроки (<span id="lobby-players-count">1</span>)</h3>
-          <p class="section-desc">Каждый игрок видит свой ник. Хост автоматически перемешает всех по парам по 2 человека.</p>
+          <p class="section-desc">Список игроков в реальном времени. Хост автоматически перемешает всех по парам по 2 человека.</p>
           <div id="lobby-players-list" class="players-input-list">
             <!-- Dynamic players list in lobby -->
           </div>
@@ -411,7 +411,7 @@
         <div class="rule-item">
           <div class="rule-num">3</div>
           <div class="rule-text">
-            <strong>Раунд 3: Пантомима</strong>
+            <strong>Раунд 2: Пантомима</strong>
             <p>Показывайте те же слова жестами и мимикой без звуков.</p>
           </div>
         </div>
@@ -426,6 +426,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.1.1"></script>
+  <script src="app.js?v=2.1.2"></script>
 </body>
 </html>

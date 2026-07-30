@@ -1,5 +1,5 @@
 /**
- * «Слово в шляпе» — Локальный режим + Онлайн-мультиплеер с Supabase Realtime Presence.
+ * «Слово в шляпе» — Локальный режим + Прямой P2P WebRTC Онлайн-мультиплеер.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -11,20 +11,10 @@ if (window.vkBridge) {
   }
 }
 
-// Supabase Realtime WebSockets (100% устойчив в РФ и СНГ)
-const SUPABASE_URL = 'https://xkmtlwrudyspxwzwndrh.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhrbXRsd3J1ZHlzcHh3enduZHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE2ODg4NjM2NzAsImV4cCI6MjAwNDQzOTY3MH0.dExEBRGZ39e7K-4T_OqXpS-2QJ4c-f1g0p0M7HqG9k0';
-
-let supabaseClient = null;
-let roomChannel = null;
-
-if (window.supabase) {
-  try {
-    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-  } catch (e) {
-    console.log('Supabase init err:', e);
-  }
-}
+// Переменные PeerJS P2P WebRTC соединения
+let peer = null;
+let peerConnections = [];
+let hostConn = null;
 
 // Игровые Константы Раундов
 const ROUNDS = [
@@ -96,7 +86,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. ОНЛАЙН МУЛЬТИПЛЕЕР (SUPABASE REALTIME PRESENCE)
+// 0. ОНЛАЙН МУЛЬТИПЛЕЕР (PEERJS DIRECT P2P CONNECTIONS)
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -122,9 +112,47 @@ function createOnlineRoom() {
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
 
-  connectRoomPresence(gameState.onlineRoomCode);
+  initHostPeer(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
+}
+
+function initHostPeer(code) {
+  if (peer) try { peer.destroy(); } catch (e) {}
+  peerConnections = [];
+
+  const hostPeerId = `slovo_shlyapa_${code}`;
+  
+  if (window.Peer) {
+    peer = new Peer(hostPeerId);
+
+    peer.on('connection', (conn) => {
+      peerConnections.push(conn);
+
+      conn.on('data', (data) => {
+        if (data.type === 'join') {
+          if (!gameState.onlinePlayers.some(p => p.id === data.id)) {
+            gameState.onlinePlayers.push({ id: data.id, name: data.name, isHost: false });
+          } else {
+            const p = gameState.onlinePlayers.find(p => p.id === data.id);
+            if (p) p.name = data.name;
+          }
+
+          renderOnlineLobby();
+
+          // Синхронизируем обновленный список игроков со ВСЕМИ подключенными смартфонами
+          broadcastToPeers({
+            type: 'sync_players',
+            players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
+          });
+        }
+      });
+
+      conn.on('close', () => {
+        peerConnections = peerConnections.filter(c => c !== conn);
+      });
+    });
+  }
 }
 
 function joinOnlineRoom(code) {
@@ -139,63 +167,52 @@ function joinOnlineRoom(code) {
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false }];
 
-  connectRoomPresence(gameState.onlineRoomCode);
+  initClientPeer(gameState.onlineRoomCode, myName);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
 
-function connectRoomPresence(roomCode) {
-  if (!supabaseClient) return;
+function initClientPeer(code, myName) {
+  if (peer) try { peer.destroy(); } catch (e) {}
 
-  if (roomChannel) {
-    supabaseClient.removeChannel(roomChannel);
-  }
+  if (window.Peer) {
+    peer = new Peer();
 
-  // Канал комнаты с отслеживанием присутствия (Presence)
-  roomChannel = supabaseClient.channel(`room_${roomCode}`, {
-    config: {
-      presence: { key: gameState.myPlayerId }
-    }
-  });
+    peer.on('open', () => {
+      const hostPeerId = `slovo_shlyapa_${code}`;
+      hostConn = peer.connect(hostPeerId);
 
-  // Отслеживаем изменения подключения всех участников в реальном времени
-  roomChannel
-    .on('presence', { event: 'sync' }, () => {
-      const state = roomChannel.presenceState();
-      const playersList = [];
-
-      Object.keys(state).forEach(key => {
-        state[key].forEach(user => {
-          if (!playersList.some(p => p.id === user.id)) {
-            playersList.push(user);
-          }
+      hostConn.on('open', () => {
+        hostConn.send({
+          type: 'join',
+          id: gameState.myPlayerId,
+          name: myName
         });
       });
 
-      if (playersList.length > 0) {
-        gameState.onlinePlayers = playersList;
-        renderOnlineLobby();
-      }
-    })
-    .on('broadcast', { event: 'start_game' }, ({ payload }) => {
-      if (payload && payload.teams) {
-        gameState.teams = payload.teams;
-        gameState.wordsPerPlayer = payload.wordsPerPlayer || 5;
-        gameState.turnSeconds = payload.turnSeconds || 60;
-        
-        // Синхронно старуем ввод слов у всех игроков!
-        startWordEntry();
-      }
-    })
-    .subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        await roomChannel.track({
-          id: gameState.myPlayerId,
-          name: getMyName(),
-          isHost: gameState.isHost
-        });
-      }
+      hostConn.on('data', (data) => {
+        if (data.type === 'sync_players') {
+          gameState.onlinePlayers = data.players;
+          renderOnlineLobby();
+        } else if (data.type === 'start_game') {
+          gameState.teams = data.teams;
+          gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
+          gameState.turnSeconds = data.turnSeconds || 60;
+          startWordEntry();
+        }
+      });
     });
+  }
+}
+
+function broadcastToPeers(payload) {
+  peerConnections.forEach(conn => {
+    try {
+      if (conn.open) {
+        conn.send(payload);
+      }
+    } catch (e) {}
+  });
 }
 
 function renderOnlineLobby() {
@@ -385,16 +402,13 @@ function shuffleRawPairs() {
     });
   }
 
-  // Если это Онлайн — хост рассылает расформированные команды ВСЕМ игрокам и запускает ввод слов!
-  if (gameState.playMode === 'online' && roomChannel && gameState.isHost) {
-    roomChannel.send({
-      type: 'broadcast',
-      event: 'start_game',
-      payload: {
-        teams: gameState.teams,
-        wordsPerPlayer: gameState.wordsPerPlayer,
-        turnSeconds: gameState.turnSeconds
-      }
+  // Если это Онлайн — хост рассылает сформированные команды ВСЕМ игрокам и запускает ввод слов!
+  if (gameState.playMode === 'online' && gameState.isHost) {
+    broadcastToPeers({
+      type: 'start_game',
+      teams: gameState.teams,
+      wordsPerPlayer: gameState.wordsPerPlayer,
+      turnSeconds: gameState.turnSeconds
     });
 
     startWordEntry();
