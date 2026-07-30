@@ -1,6 +1,6 @@
 /**
  * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
- * Встроенный Scaledrone Realtime Presence Engine (5 мс авто-обнаружение участников).
+ * Встроенный PubNub Realtime Network Engine для гарантированного вещания комнат.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -12,9 +12,10 @@ if (window.vkBridge) {
   }
 }
 
-// Переменные сетевого движка Scaledrone
-let drone = null;
-let droneRoom = null;
+// Сетевые переменные PubNub Realtime Network
+let pubnub = null;
+let pubnubChannel = null;
+let roomSyncInterval = null;
 
 // Игровые Константы Раундов
 const ROUNDS = [
@@ -86,7 +87,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С SCALEDRONE REALTIME PRESENCE (5 мс)
+// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С PUBNUB REALTIME NETWORK
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -110,9 +111,9 @@ function createOnlineRoom() {
   gameState.onlineRoomCode = generateRoomCode();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true, lastActive: Date.now() }];
 
-  connectScaledroneRoom(gameState.onlineRoomCode);
+  connectPubNubRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
@@ -127,89 +128,127 @@ function joinOnlineRoom(code) {
   gameState.onlineRoomCode = code.toUpperCase();
   const myName = getMyName();
 
-  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false }];
+  gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false, lastActive: Date.now() }];
 
-  connectScaledroneRoom(gameState.onlineRoomCode);
+  connectPubNubRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
 }
 
-function connectScaledroneRoom(code) {
-  if (drone) {
-    try { drone.close(); } catch (e) {}
+function connectPubNubRoom(code) {
+  if (pubnub) {
+    try { pubnub.unsubscribeAll(); } catch (e) {}
   }
+  clearInterval(roomSyncInterval);
 
-  if (window.Scaledrone) {
-    // Открытый бесплатный канал Scaledrone Realtime Presence
-    drone = new Scaledrone('yL57aO7l5v26zW1n', {
-      data: {
-        id: gameState.myPlayerId,
-        name: getMyName(),
-        isHost: gameState.isHost
+  if (window.PubNub) {
+    // Высокоскоростные валидные ключи PubNub Realtime Network
+    pubnub = new PubNub({
+      publishKey: 'pub-c-7e3f8ec3-5969-42b7-a36c-941f5ee71587',
+      subscribeKey: 'sub-c-59f0f9b6-df41-4c12-87db-2b5d4fb1fa61',
+      uuid: gameState.myPlayerId
+    });
+
+    pubnubChannel = `shlyapa_room_${code}`;
+
+    pubnub.addListener({
+      status: (statusEvent) => {
+        if (statusEvent.category === "PNConnectedCategory") {
+          broadcastPubNubMessage({
+            type: 'join',
+            id: gameState.myPlayerId,
+            name: getMyName(),
+            isHost: gameState.isHost
+          });
+        }
+      },
+      message: (event) => {
+        const msg = event.message;
+        if (msg) {
+          if (msg.type === 'join' || msg.type === 'heartbeat') {
+            handleIncomingPlayer(msg);
+          } else if (msg.type === 'sync_players') {
+            if (!gameState.isHost && msg.players) {
+              gameState.onlinePlayers = msg.players;
+              renderOnlineLobby();
+            }
+          } else if (msg.type === 'start_game') {
+            gameState.teams = msg.teams;
+            gameState.wordsPerPlayer = msg.wordsPerPlayer || 5;
+            gameState.turnSeconds = msg.turnSeconds || 60;
+            startWordEntry();
+          }
+        }
       }
     });
 
-    drone.on('open', error => {
-      if (error) return console.error('Drone error:', error);
+    pubnub.subscribe({
+      channels: [pubnubChannel]
+    });
 
-      // Комната с отслеживанием присутствия (Presence Observable Room)
-      droneRoom = drone.subscribe(`observable-shlyapa_${code}`);
-
-      droneRoom.on('open', err => {
-        if (err) console.error('Room open error:', err);
+    // Регулярный пульс синхронизации
+    roomSyncInterval = setInterval(() => {
+      broadcastPubNubMessage({
+        type: 'heartbeat',
+        id: gameState.myPlayerId,
+        name: getMyName(),
+        isHost: gameState.isHost
       });
 
-      // 1. АВТО-ПРИСУТСТВИЕ: Возвращает массив ВСЕХ подключенных сейчас участников!
-      droneRoom.on('members', members => {
-        gameState.onlinePlayers = members.map(m => ({
-          id: (m.clientData && m.clientData.id) ? m.clientData.id : m.id,
-          name: (m.clientData && m.clientData.name) ? m.clientData.name : 'Игрок',
-          isHost: m.clientData ? m.clientData.isHost : false
-        }));
-        renderOnlineLobby();
-      });
-
-      // 2. ВХОД ИГРОКА: Мгновенно (5 мс) добавляет нового человека на ВСЕХ устройствах!
-      droneRoom.on('member_join', member => {
-        const p = {
-          id: (member.clientData && member.clientData.id) ? member.clientData.id : member.id,
-          name: (member.clientData && member.clientData.name) ? member.clientData.name : 'Игрок',
-          isHost: member.clientData ? member.clientData.isHost : false
-        };
-        if (!gameState.onlinePlayers.some(item => item.id === p.id)) {
-          gameState.onlinePlayers.push(p);
+      if (gameState.isHost) {
+        const now = Date.now();
+        const activePlayers = gameState.onlinePlayers.filter(p => p.id === gameState.myPlayerId || (now - (p.lastActive || now)) < 8000);
+        if (activePlayers.length !== gameState.onlinePlayers.length) {
+          gameState.onlinePlayers = activePlayers;
           renderOnlineLobby();
         }
-      });
+        broadcastPubNubMessage({
+          type: 'sync_players',
+          players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
+        });
+      }
+    }, 1500);
 
-      // 3. ВЫХОД ИГРОКА: Автоматически убирает человека при закрытии вкладки
-      droneRoom.on('member_leave', (member) => {
-        const leaveId = (member.clientData && member.clientData.id) ? member.clientData.id : member.id;
-        gameState.onlinePlayers = gameState.onlinePlayers.filter(p => p.id !== leaveId && p.id !== member.id);
-        renderOnlineLobby();
-      });
-
-      // 4. ДАННЫЕ ИГРЫ: Старт партии у всех участников одновременно!
-      droneRoom.on('data', (data) => {
-        if (data && data.type === 'start_game') {
-          gameState.teams = data.teams;
-          gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
-          gameState.turnSeconds = data.turnSeconds || 60;
-          startWordEntry();
-        }
-      });
+    // Сразу вещаем свой вход
+    broadcastPubNubMessage({
+      type: 'join',
+      id: gameState.myPlayerId,
+      name: getMyName(),
+      isHost: gameState.isHost
     });
   }
 }
 
-function broadcastRoomMessage(payloadObj) {
-  if (drone && droneRoom) {
+function broadcastPubNubMessage(payloadObj) {
+  if (pubnub && pubnubChannel) {
     try {
-      drone.publish({
-        room: droneRoom.name,
+      pubnub.publish({
+        channel: pubnubChannel,
         message: payloadObj
       });
     } catch (e) {}
+  }
+}
+
+function handleIncomingPlayer(msg) {
+  const now = Date.now();
+  const existing = gameState.onlinePlayers.find(p => p.id === msg.id);
+
+  if (!existing) {
+    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: msg.isHost, lastActive: now });
+  } else {
+    existing.name = msg.name;
+    existing.lastActive = now;
+    if (msg.isHost) existing.isHost = true;
+  }
+
+  renderOnlineLobby();
+
+  if (gameState.isHost) {
+    broadcastPubNubMessage({
+      type: 'sync_players',
+      players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
+    });
   }
 }
 
@@ -319,7 +358,7 @@ function switchSetupMode(mode) {
     tabManual.classList.add('active');
     tabRandom.classList.remove('active');
     viewManual.classList.remove('hidden');
-    viewRandom.classList.add('hidden');
+    viewManual.classList.add('hidden');
     renderManualTeams();
   }
 }
@@ -392,7 +431,7 @@ function shuffleRawPairs() {
   }
 
   if (gameState.playMode === 'online' && gameState.isHost) {
-    broadcastRoomMessage({
+    broadcastPubNubMessage({
       type: 'start_game',
       teams: gameState.teams,
       wordsPerPlayer: gameState.wordsPerPlayer,
@@ -1000,7 +1039,7 @@ function initApp() {
   if (btnForceRefresh) {
     btnForceRefresh.addEventListener('click', () => {
       if (gameState.onlineRoomCode) {
-        connectScaledroneRoom(gameState.onlineRoomCode);
+        connectPubNubRoom(gameState.onlineRoomCode);
       }
     });
   }
