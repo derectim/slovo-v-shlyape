@@ -22,6 +22,32 @@ assert.equal(
 );
 assert.equal(extractRoomCodeFromLocation('', '?vk_user_id=123456789&vk_app_id=987654'), null);
 
+const inviteStart = appSource.indexOf('function createRoomInvite');
+const inviteEnd = appSource.indexOf('\nasync function shareRoomLink', inviteStart);
+assert.ok(inviteStart >= 0 && inviteEnd > inviteStart, 'Invite builder must exist');
+const createRoomInvite = Function(
+  `${appSource.slice(inviteStart, inviteEnd)}; return createRoomInvite;`
+)();
+
+const telegramInvite = createRoomInvite('6980', 'telegram');
+assert.equal(
+  telegramInvite.primaryUrl,
+  'https://t.me/slovo_v_shlyape_game_bot/game?startapp=room_6980'
+);
+assert.match(telegramInvite.text, /https:\/\/vk\.ru\/app54699959#room_6980/);
+assert.match(telegramInvite.text, /https:\/\/derectim\.github\.io\/slovo-v-shlyape\/#room=6980/);
+assert.ok(
+  telegramInvite.text.indexOf('✈️ Telegram') < telegramInvite.text.indexOf('💙 VK'),
+  'Telegram link should be first inside Telegram'
+);
+
+const vkInvite = createRoomInvite('6980', 'vk');
+assert.equal(vkInvite.primaryUrl, 'https://vk.ru/app54699959#room_6980');
+assert.ok(
+  vkInvite.text.indexOf('💙 VK') < vkInvite.text.indexOf('✈️ Telegram'),
+  'VK link should be first inside VK'
+);
+
 const copyStart = appSource.indexOf('async function copyTextToClipboard');
 const copyEnd = appSource.indexOf('\nfunction extractRoomCodeFromLocation', copyStart);
 assert.ok(copyStart >= 0 && copyEnd > copyStart, 'Clipboard helper must exist');
@@ -83,4 +109,4 @@ assert.equal(await fallbackCopy('резервное приглашение'), tr
 assert.equal(fallbackInvoked, true);
 assert.equal(textarea.value, 'резервное приглашение');
 
-console.log('App logic test passed: room links and clipboard fallbacks work for VK and browsers.');
+console.log('App logic test passed: platform invites, room links and clipboard fallbacks work.');

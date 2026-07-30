@@ -45,7 +45,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/' || url.pathname === '/health') {
-      return jsonResponse({ ok: true, service: 'slovo-v-shlyape-realtime', version: '2.5.2' });
+      return jsonResponse({ ok: true, service: 'slovo-v-shlyape-realtime', version: '2.5.3' });
     }
 
     const match = url.pathname.match(/^\/rooms\/(\d{4})$/);
@@ -142,7 +142,7 @@ export class GameRoom {
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ playerId, name, isHost, connectedAt: Date.now() });
 
-    safeSend(server, { type: 'connected', playerId, isHost, version: '2.5.2' });
+    safeSend(server, { type: 'connected', playerId, isHost, version: '2.5.3' });
     this.broadcastPlayers();
 
     return new Response(null, { status: 101, webSocket: client });

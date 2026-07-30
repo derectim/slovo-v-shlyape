@@ -90,6 +90,9 @@ const MULTIPLAYER_SERVER_URL = window.__GAME_WS_URL__
 const launchParams = new URLSearchParams(window.location.search);
 const vkPlatform = (launchParams.get('vk_platform') || '').toLowerCase();
 const isVkMiniApp = launchParams.has('vk_app_id') || launchParams.has('vk_platform');
+const isTelegramMiniApp = launchParams.has('tgWebAppData')
+  || launchParams.has('tgWebAppVersion')
+  || Boolean(window.Telegram && window.Telegram.WebApp);
 const isCoarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
 const isVkMobile = isVkMiniApp && (
   /mobile|iphone|android/.test(vkPlatform) || isCoarsePointer
@@ -944,18 +947,41 @@ function renderOnlineLobby() {
   }
 }
 
+function createRoomInvite(code, platform = 'web') {
+  const roomParam = `room_${code}`;
+  const links = {
+    web: `https://derectim.github.io/slovo-v-shlyape/#room=${code}`,
+    telegram: `https://t.me/slovo_v_shlyape_game_bot/game?startapp=${roomParam}`,
+    vk: `https://vk.ru/app54699959#${roomParam}`
+  };
+  const labels = {
+    web: '🌐 Браузер',
+    telegram: '✈️ Telegram',
+    vk: '💙 VK'
+  };
+  const order = platform === 'telegram'
+    ? ['telegram', 'vk', 'web']
+    : (platform === 'vk' ? ['vk', 'telegram', 'web'] : ['web', 'telegram', 'vk']);
+  const linkLines = order.map(key => `${labels[key]}: ${links[key]}`).join('\n');
+
+  return {
+    primaryUrl: links[platform] || links.web,
+    text: `🎩 Сыграем в «Слово в шляпе»!\nКод комнаты: ${code}\n\n${linkLines}`
+  };
+}
+
 async function shareRoomLink() {
   const code = gameState.onlineRoomCode || '7392';
-  const roomUrl = `https://derectim.github.io/slovo-v-shlyape/#room=${code}`;
-  const shareText = `🎩 Сыграем в «Слово в шляпе»! Заходи в комнату по коду: ${code}\n${roomUrl}`;
+  const platform = isVkMiniApp ? 'vk' : (isTelegramMiniApp ? 'telegram' : 'web');
+  const invite = createRoomInvite(code, platform);
 
-  const copied = await copyTextToClipboard(shareText);
+  const copied = await copyTextToClipboard(invite.text);
   if (copied) {
-    alert(`📋 Приглашение в комнату ${code} скопировано!\n\nТеперь вставьте его в чат Telegram или VK.`);
+    alert(`📋 Приглашение в комнату ${code} скопировано!\n\nВ нём есть отдельные ссылки для Telegram, VK и браузера.`);
     return;
   }
 
-  window.prompt('Не удалось получить доступ к буферу обмена. Скопируйте ссылку вручную:', roomUrl);
+  window.prompt('Не удалось получить доступ к буферу обмена. Скопируйте ссылку вручную:', invite.primaryUrl);
 }
 
 async function copyTextToClipboard(textToCopy) {
