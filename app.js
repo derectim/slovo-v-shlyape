@@ -1,6 +1,6 @@
 /**
  * «Слово в шляпе» — Полный кроссплатформенный мультиплеер (Telegram + VK + Web + Mobile).
- * Встроенный нативный високоскоростной WebSocket 0мс (Switching Protocols HTTP 101).
+ * Онлайн-комнаты на PeerJS/WebRTC с прямой передачей данных между устройствами.
  */
 
 // Инициализация VK Bridge для ВК Mini Apps
@@ -12,9 +12,27 @@ if (window.vkBridge) {
   }
 }
 
-// Сетевые переменные WebSocket
-let roomSocket = null;
+// Сетевые переменные PeerJS/WebRTC. PeerJS Cloud используется только для
+// согласования соединения, игровые данные идут напрямую между устройствами.
+let peerClient = null;
+let hostConnection = null;
+let hostConnections = new Map();
+let hostWordSubmissions = new Map();
+let hasSubmittedWords = false;
 let roomSyncInterval = null;
+let reconnectTimer = null;
+let connectionState = 'offline';
+
+const PEER_ROOM_PREFIX = 'slovo-v-shlyape-room-';
+const PEER_OPTIONS = {
+  debug: 0,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ]
+  }
+};
 
 // Игровые Константы Раундов
 const ROUNDS = [
@@ -68,6 +86,7 @@ function getAllPlayers() {
   gameState.teams.forEach((team, teamIndex) => {
     team.playerNames.forEach((playerName, playerIndex) => {
       players.push({
+        id: Array.isArray(team.playerIds) ? team.playerIds[playerIndex] : null,
         name: playerName,
         teamName: team.name,
         teamIndex,
@@ -86,7 +105,7 @@ function showScreen(screenId) {
 }
 
 // --------------------------------------------------------------------------
-// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН С НАТИВНЫМ WEBSOCKET (0 мс)
+// 0. КРОСС-ПЛАТФОРМЕННЫЙ ОНЛАЙН НА PEERJS/WEBRTC
 // --------------------------------------------------------------------------
 
 function getMyName() {
@@ -105,6 +124,7 @@ function generateRoomCode() {
 }
 
 function createOnlineRoom() {
+  destroyPeerNetwork();
   gameState.playMode = 'online';
   gameState.isHost = true;
   gameState.onlineRoomCode = generateRoomCode();
@@ -112,9 +132,9 @@ function createOnlineRoom() {
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: true, lastActive: Date.now() }];
 
-  connectPieSocketRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
+  initHostPeer(gameState.onlineRoomCode);
 }
 
 function joinOnlineRoom(code) {
@@ -122,106 +142,391 @@ function joinOnlineRoom(code) {
     alert('Пожалуйста, введите 4-значный код комнаты!');
     return;
   }
+  destroyPeerNetwork();
   gameState.playMode = 'online';
   gameState.isHost = false;
-  gameState.onlineRoomCode = code.toUpperCase();
+  gameState.onlineRoomCode = code;
   const myName = getMyName();
 
   gameState.onlinePlayers = [{ id: gameState.myPlayerId, name: myName, isHost: false, lastActive: Date.now() }];
 
-  connectPieSocketRoom(gameState.onlineRoomCode);
   renderOnlineLobby();
   showScreen('screen-online-lobby');
+  initGuestPeer(gameState.onlineRoomCode);
 }
 
-function connectPieSocketRoom(code) {
-  if (roomSocket) {
-    try { roomSocket.close(); } catch (e) {}
-  }
+function getHostPeerId(code) {
+  return `${PEER_ROOM_PREFIX}${code}`;
+}
+
+function setConnectionStatus(state, message) {
+  connectionState = state;
+  const status = document.getElementById('lobby-connection-status');
+  if (!status) return;
+
+  const colors = {
+    online: '#10B981',
+    connecting: '#FFB84D',
+    error: '#EF4444',
+    offline: 'rgba(255,255,255,0.55)'
+  };
+  status.textContent = message;
+  status.style.color = colors[state] || colors.offline;
+}
+
+function destroyPeerNetwork() {
   clearInterval(roomSyncInterval);
+  clearTimeout(reconnectTimer);
+  roomSyncInterval = null;
+  reconnectTimer = null;
 
-  // Прямое вещание через подлинный нативный WebSocket
-  const wsUrl = `wss://demo.piesocket.com/v3/shlyapa_room_${code}?api_key=VCXSpRHDAAbWuZWwu9FGkuQLnvLEHJ7Zosg9wVbx&notify_self=1`;
-
-  try {
-    roomSocket = new WebSocket(wsUrl);
-
-    roomSocket.onopen = () => {
-      broadcastRoomPayload({
-        type: 'join',
-        id: gameState.myPlayerId,
-        name: getMyName(),
-        isHost: gameState.isHost
-      });
-    };
-
-    roomSocket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data) {
-          if (data.type === 'join' || data.type === 'heartbeat') {
-            handleIncomingPlayer(data);
-          } else if (data.type === 'sync_players') {
-            if (!gameState.isHost && data.players) {
-              gameState.onlinePlayers = data.players;
-              renderOnlineLobby();
-            }
-          } else if (data.type === 'start_game') {
-            gameState.teams = data.teams;
-            gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
-            gameState.turnSeconds = data.turnSeconds || 60;
-            startWordEntry();
-          }
-        }
-      } catch (err) {}
-    };
-
-    roomSocket.onerror = (e) => {
-      console.warn('WebSocket error, retrying...', e);
-    };
-
-    roomSocket.onclose = () => {
-      setTimeout(() => {
-        if (gameState.playMode === 'online' && gameState.onlineRoomCode === code) {
-          connectPieSocketRoom(code);
-        }
-      }, 2000);
-    };
-
-    // Периодический пульс вещания
-    roomSyncInterval = setInterval(() => {
-      broadcastRoomPayload({
-        type: 'heartbeat',
-        id: gameState.myPlayerId,
-        name: getMyName(),
-        isHost: gameState.isHost
-      });
-
-      if (gameState.isHost) {
-        const now = Date.now();
-        const activePlayers = gameState.onlinePlayers.filter(p => p.id === gameState.myPlayerId || (now - (p.lastActive || now)) < 8000);
-        if (activePlayers.length !== gameState.onlinePlayers.length) {
-          gameState.onlinePlayers = activePlayers;
-          renderOnlineLobby();
-        }
-        broadcastRoomPayload({
-          type: 'sync_players',
-          players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
-        });
-      }
-    }, 1200);
-
-  } catch (e) {
-    console.error('WebSocket connection failed:', e);
+  if (hostConnection) {
+    try { hostConnection.close(); } catch (e) {}
   }
+  hostConnection = null;
+
+  hostConnections.forEach(connection => {
+    try { connection.close(); } catch (e) {}
+  });
+  hostConnections.clear();
+  hostWordSubmissions.clear();
+
+  if (peerClient) {
+    try { peerClient.destroy(); } catch (e) {}
+  }
+  peerClient = null;
+  connectionState = 'offline';
+}
+
+function leaveOnlineRoom() {
+  gameState.playMode = 'local';
+  gameState.isHost = false;
+  gameState.onlineRoomCode = null;
+  gameState.onlinePlayers = [];
+  destroyPeerNetwork();
+  showScreen('screen-online-hub');
+}
+
+function reconnectPeerRoom() {
+  const code = gameState.onlineRoomCode;
+  const isHost = gameState.isHost;
+  if (!code || gameState.playMode !== 'online') return;
+
+  destroyPeerNetwork();
+  if (isHost) initHostPeer(code);
+  else initGuestPeer(code);
+}
+
+function initHostPeer(code, collisionAttempt = 0) {
+  if (!window.Peer) {
+    setConnectionStatus('error', '● Сетевая библиотека не загрузилась');
+    return;
+  }
+
+  setConnectionStatus('connecting', '● Создаём комнату…');
+  peerClient = new Peer(getHostPeerId(code), PEER_OPTIONS);
+
+  peerClient.on('open', () => {
+    setConnectionStatus('online', '● Комната доступна — можно приглашать игроков');
+    startRoomHeartbeat();
+  });
+
+  peerClient.on('connection', connection => {
+    registerHostConnection(connection);
+  });
+
+  peerClient.on('disconnected', () => {
+    setConnectionStatus('connecting', '● Восстанавливаем комнату…');
+    try { peerClient.reconnect(); } catch (e) {}
+  });
+
+  peerClient.on('error', error => {
+    if (error.type === 'unavailable-id' && collisionAttempt < 8) {
+      const nextCode = generateRoomCode();
+      gameState.onlineRoomCode = nextCode;
+      renderOnlineLobby();
+      try { peerClient.destroy(); } catch (e) {}
+      peerClient = null;
+      setTimeout(() => initHostPeer(nextCode, collisionAttempt + 1), 150);
+      return;
+    }
+    console.error('Peer host error:', error);
+    setConnectionStatus('error', `● Ошибка сети: ${peerErrorMessage(error)}`);
+  });
+}
+
+function registerHostConnection(connection) {
+  const connectionKey = connection.connectionId || `${connection.peer}-${Date.now()}`;
+  hostConnections.set(connectionKey, connection);
+
+  connection.on('open', () => {
+    connection.send({
+      type: 'sync_players',
+      players: publicPlayersList()
+    });
+  });
+
+  connection.on('data', data => {
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'join' || data.type === 'heartbeat') {
+      connection.playerId = data.id;
+      handleIncomingPlayer(data);
+    } else if (data.type === 'submit_words') {
+      connection.playerId = data.playerId;
+      handleOnlineWordSubmission(data);
+    } else if (data.type === 'request_sync') {
+      connection.send({ type: 'sync_players', players: publicPlayersList() });
+    }
+  });
+
+  const removeConnection = () => {
+    hostConnections.delete(connectionKey);
+    if (connection.playerId) {
+      gameState.onlinePlayers = gameState.onlinePlayers.filter(player => player.id !== connection.playerId);
+      renderOnlineLobby();
+      broadcastPlayersList();
+    }
+  };
+
+  connection.on('close', removeConnection);
+  connection.on('error', error => {
+    console.warn('Peer connection error:', error);
+    removeConnection();
+  });
+}
+
+function initGuestPeer(code) {
+  if (!window.Peer) {
+    setConnectionStatus('error', '● Сетевая библиотека не загрузилась');
+    return;
+  }
+
+  setConnectionStatus('connecting', '● Подключаемся к комнате…');
+  peerClient = new Peer(undefined, PEER_OPTIONS);
+
+  peerClient.on('open', () => connectGuestToHost(code));
+  peerClient.on('disconnected', () => {
+    setConnectionStatus('connecting', '● Восстанавливаем соединение…');
+    try { peerClient.reconnect(); } catch (e) {}
+  });
+  peerClient.on('error', error => {
+    if (error.type === 'peer-unavailable') {
+      setConnectionStatus('connecting', '● Ждём ведущего комнаты…');
+      scheduleGuestReconnect(code);
+      return;
+    }
+    console.error('Peer guest error:', error);
+    setConnectionStatus('error', `● Ошибка сети: ${peerErrorMessage(error)}`);
+    scheduleGuestReconnect(code);
+  });
+}
+
+function connectGuestToHost(code) {
+  if (!peerClient || peerClient.destroyed || !peerClient.open) return;
+
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+
+  if (hostConnection) {
+    try { hostConnection.close(); } catch (e) {}
+  }
+
+  setConnectionStatus('connecting', '● Подключаемся к ведущему…');
+  hostConnection = peerClient.connect(getHostPeerId(code), {
+    reliable: true,
+    metadata: { playerId: gameState.myPlayerId }
+  });
+  const currentConnection = hostConnection;
+
+  currentConnection.on('open', () => {
+    if (hostConnection !== currentConnection) return;
+    setConnectionStatus('online', '● Подключено к комнате');
+    sendGuestPresence('join');
+    currentConnection.send({ type: 'request_sync' });
+    startRoomHeartbeat();
+  });
+
+  currentConnection.on('data', data => {
+    if (hostConnection !== currentConnection) return;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'sync_players' && Array.isArray(data.players)) {
+      gameState.onlinePlayers = data.players;
+      renderOnlineLobby();
+    } else if (data.type === 'start_game') {
+      gameState.teams = data.teams;
+      gameState.wordsPerPlayer = data.wordsPerPlayer || 5;
+      gameState.turnSeconds = data.turnSeconds || 60;
+      startWordEntry();
+    } else if (data.type === 'word_progress') {
+      if (hasSubmittedWords) showOnlineWordProgress(data.submitted || 0, data.total || 0);
+    } else if (data.type === 'game_ready') {
+      beginOnlineGame(data);
+    }
+  });
+
+  currentConnection.on('close', () => {
+    if (hostConnection !== currentConnection) return;
+    clearInterval(roomSyncInterval);
+    setConnectionStatus('connecting', '● Соединение потеряно, переподключаемся…');
+    scheduleGuestReconnect(code);
+  });
+  currentConnection.on('error', error => {
+    if (hostConnection !== currentConnection) return;
+    console.warn('Host connection error:', error);
+    setConnectionStatus('connecting', '● Не удалось подключиться, повторяем…');
+    scheduleGuestReconnect(code);
+  });
+}
+
+function scheduleGuestReconnect(code) {
+  clearTimeout(reconnectTimer);
+  if (gameState.playMode !== 'online' || gameState.isHost || gameState.onlineRoomCode !== code) return;
+  reconnectTimer = setTimeout(() => {
+    if (!peerClient || peerClient.destroyed) {
+      initGuestPeer(code);
+    } else if (peerClient.open) {
+      connectGuestToHost(code);
+    }
+  }, 1800);
+}
+
+function startRoomHeartbeat() {
+  clearInterval(roomSyncInterval);
+  roomSyncInterval = setInterval(() => {
+    if (gameState.playMode !== 'online') return;
+
+    if (gameState.isHost) {
+      const cutoff = Date.now() - 12000;
+      const activePlayers = gameState.onlinePlayers.filter(player => player.isHost || (player.lastActive || 0) >= cutoff);
+      if (activePlayers.length !== gameState.onlinePlayers.length) {
+        gameState.onlinePlayers = activePlayers;
+        renderOnlineLobby();
+      }
+      broadcastPlayersList();
+    } else {
+      sendGuestPresence('heartbeat');
+    }
+  }, 3000);
+}
+
+function sendGuestPresence(type) {
+  if (!hostConnection || !hostConnection.open) return;
+  hostConnection.send({
+    type,
+    id: gameState.myPlayerId,
+    name: getMyName(),
+    isHost: false
+  });
 }
 
 function broadcastRoomPayload(payloadObj) {
-  if (roomSocket && roomSocket.readyState === WebSocket.OPEN) {
-    try {
-      roomSocket.send(JSON.stringify(payloadObj));
-    } catch (e) {}
+  if (gameState.isHost) broadcastToPeers(payloadObj);
+  else if (hostConnection && hostConnection.open) hostConnection.send(payloadObj);
+}
+
+function broadcastToPeers(payloadObj) {
+  hostConnections.forEach(connection => {
+    if (!connection.open) return;
+    try { connection.send(payloadObj); } catch (e) {}
+  });
+}
+
+function publicPlayersList() {
+  return gameState.onlinePlayers.map(player => ({
+    id: player.id,
+    name: player.name,
+    isHost: !!player.isHost
+  }));
+}
+
+function broadcastPlayersList() {
+  broadcastToPeers({ type: 'sync_players', players: publicPlayersList() });
+}
+
+function handleOnlineWordSubmission(data) {
+  if (!gameState.isHost || !data || !data.playerId || !Array.isArray(data.words)) return;
+  const playerExists = gameState.onlinePlayers.some(player => player.id === data.playerId);
+  const words = data.words
+    .map(word => typeof word === 'string' ? word.trim() : '')
+    .filter(Boolean)
+    .slice(0, gameState.wordsPerPlayer);
+
+  if (!playerExists || words.length !== gameState.wordsPerPlayer) return;
+
+  hostWordSubmissions.set(data.playerId, words);
+  const submitted = hostWordSubmissions.size;
+  const total = gameState.onlinePlayers.length;
+  const progressPayload = { type: 'word_progress', submitted, total };
+  broadcastToPeers(progressPayload);
+  if (hasSubmittedWords) showOnlineWordProgress(submitted, total);
+
+  if (submitted < total) return;
+
+  gameState.allCards = [];
+  hostWordSubmissions.forEach((playerWords, playerId) => {
+    playerWords.forEach(word => {
+      gameState.allCards.push({
+        id: `${playerId}_${Math.random().toString(36).slice(2, 9)}`,
+        word
+      });
+    });
+  });
+
+  const deck = shuffleCards(gameState.allCards);
+  const readyPayload = {
+    type: 'game_ready',
+    allCards: gameState.allCards,
+    deck,
+    teams: gameState.teams
+  };
+  broadcastToPeers(readyPayload);
+  beginOnlineGame(readyPayload);
+}
+
+function showOnlineWordProgress(submitted, total) {
+  if (gameState.playMode !== 'online') return;
+  const privacyShield = document.getElementById('privacy-shield');
+  const wordsForm = document.getElementById('words-form-container');
+  const revealButton = document.getElementById('btn-reveal-entry');
+  const title = document.getElementById('privacy-player-name');
+  const description = document.getElementById('privacy-description');
+
+  if (privacyShield) privacyShield.classList.remove('hidden');
+  if (wordsForm) wordsForm.classList.add('hidden');
+  if (revealButton) revealButton.classList.add('hidden');
+  if (title) title.textContent = 'Слова отправлены';
+  if (description) description.textContent = `Ждём остальных игроков: ${submitted} из ${total}`;
+}
+
+function beginOnlineGame(data) {
+  if (!data || !Array.isArray(data.allCards) || !Array.isArray(data.deck)) return;
+  gameState.teams = Array.isArray(data.teams) ? data.teams : gameState.teams;
+  gameState.allCards = data.allCards;
+  gameState.deck = data.deck;
+  gameState.currentRoundIndex = 0;
+  gameState.activeTeamIndex = 0;
+  renderRoundIntro();
+  showScreen('screen-round-intro');
+}
+
+function shuffleCards(cards) {
+  const shuffled = [...cards];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
   }
+  return shuffled;
+}
+
+function peerErrorMessage(error) {
+  const messages = {
+    network: 'нет доступа к сети',
+    'server-error': 'сервер согласования недоступен',
+    'socket-error': 'ошибка сетевого соединения',
+    'browser-incompatible': 'браузер не поддерживает WebRTC',
+    'ssl-unavailable': 'защищённое соединение недоступно'
+  };
+  return messages[error && error.type] || 'подключение не установлено';
 }
 
 function handleIncomingPlayer(msg) {
@@ -229,21 +534,14 @@ function handleIncomingPlayer(msg) {
   const existing = gameState.onlinePlayers.find(p => p.id === msg.id);
 
   if (!existing) {
-    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: msg.isHost, lastActive: now });
+    gameState.onlinePlayers.push({ id: msg.id, name: msg.name, isHost: false, lastActive: now });
   } else {
     existing.name = msg.name;
     existing.lastActive = now;
-    if (msg.isHost) existing.isHost = true;
   }
 
   renderOnlineLobby();
-
-  if (gameState.isHost) {
-    broadcastRoomPayload({
-      type: 'sync_players',
-      players: gameState.onlinePlayers.map(p => ({ id: p.id, name: p.name, isHost: p.isHost }))
-    });
-  }
+  broadcastPlayersList();
 }
 
 function renderOnlineLobby() {
@@ -394,9 +692,13 @@ function removeRawPlayer(idx) {
 function shuffleRawPairs() {
   let valid = [];
   if (gameState.playMode === 'online') {
-    valid = gameState.onlinePlayers.map(p => p.name.trim()).filter(n => n.length > 0);
+    valid = gameState.onlinePlayers
+      .map(player => ({ id: player.id, name: player.name.trim() }))
+      .filter(player => player.name.length > 0);
   } else {
-    valid = gameState.rawPlayerNames.map(n => n.trim()).filter(n => n.length > 0);
+    valid = gameState.rawPlayerNames
+      .map(name => ({ id: null, name: name.trim() }))
+      .filter(player => player.name.length > 0);
   }
 
   if (valid.length < 4) {
@@ -405,7 +707,7 @@ function shuffleRawPairs() {
   }
 
   if (valid.length % 2 !== 0) {
-    valid.push(`Игрок ${valid.length + 1}`);
+    valid.push({ id: null, name: `Игрок ${valid.length + 1}` });
   }
 
   for (let i = valid.length - 1; i > 0; i--) {
@@ -418,13 +720,15 @@ function shuffleRawPairs() {
     const teamNum = (i / 2) + 1;
     gameState.teams.push({
       name: `Команда ${teamNum}`,
-      playerNames: [valid[i], valid[i + 1]],
+      playerNames: [valid[i].name, valid[i + 1].name],
+      playerIds: [valid[i].id, valid[i + 1].id],
       roundScores: [0, 0, 0],
       explainerCursor: 0
     });
   }
 
   if (gameState.playMode === 'online' && gameState.isHost) {
+    hostWordSubmissions.clear();
     broadcastRoomPayload({
       type: 'start_game',
       teams: gameState.teams,
@@ -508,8 +812,23 @@ function startWordEntry() {
     shuffleRawPairs();
   }
 
-  gameState.wordEntryPlayerIndex = 0;
+  const allPlayers = getAllPlayers();
+  if (gameState.playMode === 'online') {
+    const myIndex = allPlayers.findIndex(player => player.id === gameState.myPlayerId);
+    gameState.wordEntryPlayerIndex = myIndex >= 0 ? myIndex : 0;
+  } else {
+    gameState.wordEntryPlayerIndex = 0;
+  }
   gameState.allCards = [];
+  hasSubmittedWords = false;
+  const revealButton = document.getElementById('btn-reveal-entry');
+  const description = document.getElementById('privacy-description');
+  if (revealButton) revealButton.classList.remove('hidden');
+  if (description) {
+    description.textContent = gameState.playMode === 'online'
+      ? 'Введите свои слова. Другие игроки их не увидят.'
+      : 'Возьмите устройство. Остальным участникам смотреть запрещено!';
+  }
   renderWordEntryPlayer();
   showScreen('screen-word-entry');
 }
@@ -543,7 +862,9 @@ function renderWordEntryPlayer() {
   }
 
   const isLast = gameState.wordEntryPlayerIndex === allPlayers.length - 1;
-  document.getElementById('submit-words-label').textContent = isLast ? 'Перемешать слова в шляпе' : 'Передать устройство';
+  document.getElementById('submit-words-label').textContent = gameState.playMode === 'online'
+    ? 'Отправить слова ведущему'
+    : (isLast ? 'Перемешать слова в шляпе' : 'Передать устройство');
 }
 
 function revealWordEntryForm() {
@@ -565,6 +886,20 @@ function submitCurrentPlayerWords() {
       return;
     }
     words.push(val);
+  }
+
+  if (gameState.playMode === 'online') {
+    const submission = {
+      type: 'submit_words',
+      playerId: gameState.myPlayerId,
+      name: getMyName(),
+      words
+    };
+    hasSubmittedWords = true;
+    if (gameState.isHost) handleOnlineWordSubmission(submission);
+    else broadcastRoomPayload(submission);
+    showOnlineWordProgress(gameState.isHost ? hostWordSubmissions.size : 1, gameState.onlinePlayers.length);
+    return;
   }
 
   words.forEach(word => {
@@ -1014,7 +1349,7 @@ function initApp() {
 
   const btnLobbyLeave = document.getElementById('btn-lobby-leave');
   if (btnLobbyLeave) {
-    btnLobbyLeave.addEventListener('click', () => showScreen('screen-online-hub'));
+    btnLobbyLeave.addEventListener('click', leaveOnlineRoom);
   }
 
   const btnShareLink = document.getElementById('btn-share-room-link');
@@ -1033,7 +1368,7 @@ function initApp() {
   if (btnForceRefresh) {
     btnForceRefresh.addEventListener('click', () => {
       if (gameState.onlineRoomCode) {
-        connectPieSocketRoom(gameState.onlineRoomCode);
+        reconnectPeerRoom();
       }
     });
   }

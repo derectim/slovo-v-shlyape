@@ -11,8 +11,9 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <!-- Local VK Bridge Bundle -->
-  <script src="vk-bridge.js?v=2.2.1"></script>
+  <!-- Local PeerJS WebRTC and VK Bridge bundles -->
+  <script src="peerjs.min.js?v=2.3.0"></script>
+  <script src="vk-bridge.js?v=2.3.0"></script>
   <script>
     (function initVK() {
       function sendVKInit() {
@@ -34,7 +35,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css?v=2.2.1">
+  <link rel="stylesheet" href="styles.css?v=2.3.0">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -64,7 +65,7 @@
         </div>
 
         <div style="margin-top: 20px; font-size: 11px; opacity: 0.5; font-weight: 600;">
-          v2.2.1 (Нативный WebSocket 0мс)
+          v2.3.0 (WebRTC-мультиплеер)
         </div>
       </div>
     </section>
@@ -120,6 +121,9 @@
             <button id="btn-share-room-link" class="btn btn-sm btn-primary">
               🔗 Поделиться
             </button>
+          </div>
+          <div id="lobby-connection-status" class="setting-hint" style="margin-top: 10px; font-weight: 800;">
+            ● Подключение…
           </div>
         </div>
 
@@ -245,7 +249,7 @@
         <div id="privacy-shield" class="privacy-card">
           <div class="privacy-icon">🔒</div>
           <h3 id="privacy-player-name">Игрок</h3>
-          <p class="privacy-desc">Возьмите устройство. Остальным участникам смотреть запрещено!</p>
+          <p id="privacy-description" class="privacy-desc">Возьмите устройство. Остальным участникам смотреть запрещено!</p>
           <button id="btn-reveal-entry" class="btn btn-primary glow-effect">
             Я готов ввести слова
           </button>
@@ -432,6 +436,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.2.1"></script>
+  <script src="app.js?v=2.3.0"></script>
 </body>
 </html>
