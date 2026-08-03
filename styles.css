@@ -1139,6 +1139,57 @@ body {
   box-shadow: 0 30px 60px rgba(0, 0, 0, 0.8);
 }
 
+.notice-modal-card {
+  max-width: 390px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.notice-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  background: linear-gradient(135deg, rgba(108, 76, 241, 0.32), rgba(255, 184, 77, 0.2));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.notice-modal-card h3 {
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.notice-message {
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.notice-copy-area {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.notice-copy-area.hidden {
+  display: none;
+}
+
+.notice-copy-value {
+  min-height: 112px;
+  resize: none;
+  user-select: text;
+  -webkit-user-select: text;
+  line-height: 1.35;
+}
+
 .modal-header {
   display: flex;
   justify-content: space-between;

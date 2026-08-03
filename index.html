@@ -12,7 +12,7 @@
   <meta http-equiv="Expires" content="0">
 
   <!-- Local VK Bridge bundle -->
-  <script src="vk-bridge.js?v=2.5.3"></script>
+  <script src="vk-bridge.js?v=2.5.4"></script>
   <script>
     (function initVK() {
       function sendVKInit() {
@@ -29,7 +29,7 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="styles.css?v=2.5.3">
+  <link rel="stylesheet" href="styles.css?v=2.5.4">
 </head>
 <body>
   <!-- Canvas Confetti Overlay -->
@@ -59,7 +59,7 @@
         </div>
 
         <div style="margin-top: 20px; font-size: 11px; opacity: 0.5; font-weight: 600;">
-          v2.5.3 (ссылки Telegram и VK)
+          v2.5.4 (обновление для VK)
         </div>
       </div>
     </section>
@@ -442,6 +442,20 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.5.3"></script>
+  <!-- IN-GAME NOTICE MODAL -->
+  <div id="modal-notice" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notice-title">
+    <div class="modal-card notice-modal-card">
+      <div class="notice-icon" id="notice-icon" aria-hidden="true">🎩</div>
+      <h3 id="notice-title">Сообщение</h3>
+      <p id="notice-message" class="notice-message"></p>
+      <div id="notice-copy-area" class="notice-copy-area hidden">
+        <textarea id="notice-copy-value" class="input-field notice-copy-value" readonly></textarea>
+        <button id="btn-notice-copy" class="btn btn-secondary btn-full">📋 Скопировать</button>
+      </div>
+      <button id="btn-notice-ok" class="btn btn-primary btn-full">Понятно</button>
+    </div>
+  </div>
+
+  <script src="app.js?v=2.5.4"></script>
 </body>
 </html>

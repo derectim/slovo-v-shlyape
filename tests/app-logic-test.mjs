@@ -34,19 +34,17 @@ assert.equal(
   telegramInvite.primaryUrl,
   'https://t.me/slovo_v_shlyape_game_bot/game?startapp=room_6980'
 );
-assert.match(telegramInvite.text, /https:\/\/vk\.ru\/app54699959#room_6980/);
 assert.match(telegramInvite.text, /https:\/\/derectim\.github\.io\/slovo-v-shlyape\/#room=6980/);
-assert.ok(
-  telegramInvite.text.indexOf('✈️ Telegram') < telegramInvite.text.indexOf('💙 VK'),
-  'Telegram link should be first inside Telegram'
-);
+assert.doesNotMatch(telegramInvite.text, /vk\.ru|💙 VK/i);
 
 const vkInvite = createRoomInvite('6980', 'vk');
 assert.equal(vkInvite.primaryUrl, 'https://vk.ru/app54699959#room_6980');
-assert.ok(
-  vkInvite.text.indexOf('💙 VK') < vkInvite.text.indexOf('✈️ Telegram'),
-  'VK link should be first inside VK'
-);
+assert.match(vkInvite.text, /https:\/\/derectim\.github\.io\/slovo-v-shlyape\/#room=6980/);
+assert.doesNotMatch(vkInvite.text, /Telegram|t\.me/i);
+
+assert.doesNotMatch(appSource, /\b(?:alert|confirm|prompt)\s*\(/, 'Browser dialogs must not be used');
+assert.match(appSource, /VKWebAppShowNativeAds/);
+assert.match(appSource, /ad_format:\s*'interstitial'/);
 
 const copyStart = appSource.indexOf('async function copyTextToClipboard');
 const copyEnd = appSource.indexOf('\nfunction extractRoomCodeFromLocation', copyStart);

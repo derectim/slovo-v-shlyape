@@ -33,6 +33,8 @@ let turnActionRetryTimer = null;
 let pendingHostStateMessage = null;
 let hostStateRetryTimer = null;
 let viewportRefreshTimer = null;
+let noticeOnClose = null;
+let vkInterstitialRequested = false;
 
 const PLAYER_ID_STORAGE_KEY = 'slovo_hat_player_id_v1';
 const ROOM_SESSION_STORAGE_KEY = 'slovo_hat_room_session_v1';
@@ -232,6 +234,59 @@ function generateRoomCode() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
+function showGameNotice(message, options = {}) {
+  const modal = document.getElementById('modal-notice');
+  if (!modal) return;
+
+  const title = options.title || 'Обратите внимание';
+  const icon = options.icon || '🎩';
+  const copyValue = options.copyValue || '';
+  noticeOnClose = typeof options.onClose === 'function' ? options.onClose : null;
+
+  document.getElementById('notice-title').textContent = title;
+  document.getElementById('notice-icon').textContent = icon;
+  document.getElementById('notice-message').textContent = message;
+  document.getElementById('notice-copy-value').value = copyValue;
+  document.getElementById('notice-copy-area').classList.toggle('hidden', !copyValue);
+  document.getElementById('btn-notice-copy').textContent = '📋 Скопировать';
+  modal.classList.remove('hidden');
+}
+
+function closeGameNotice() {
+  const modal = document.getElementById('modal-notice');
+  if (modal) modal.classList.add('hidden');
+  const callback = noticeOnClose;
+  noticeOnClose = null;
+  if (callback) callback();
+}
+
+async function retryNoticeCopy() {
+  const value = document.getElementById('notice-copy-value').value;
+  const copyButton = document.getElementById('btn-notice-copy');
+  const copied = await copyTextToClipboard(value);
+  if (copied) {
+    copyButton.textContent = '✓ Скопировано';
+    document.getElementById('notice-message').textContent = 'Приглашение скопировано. Отправьте его друзьям.';
+  } else {
+    copyButton.textContent = 'Выделить текст';
+    const copyField = document.getElementById('notice-copy-value');
+    copyField.focus();
+    copyField.select();
+  }
+}
+
+function requestVkInterstitialAd() {
+  if (!isVkMiniApp || vkInterstitialRequested) return;
+  const bridge = window.vkBridge ? (window.vkBridge.default || window.vkBridge) : null;
+  if (!bridge || typeof bridge.send !== 'function') return;
+  if (typeof bridge.supports === 'function' && !bridge.supports('VKWebAppShowNativeAds')) return;
+
+  vkInterstitialRequested = true;
+  try {
+    Promise.resolve(bridge.send('VKWebAppShowNativeAds', { ad_format: 'interstitial' })).catch(() => {});
+  } catch (_) {}
+}
+
 function isRoomSocketOpen() {
   return Boolean(roomSocket && roomSocket.readyState === WebSocket.OPEN);
 }
@@ -313,7 +368,7 @@ function createOnlineRoom(forcedCode = null) {
 
 function joinOnlineRoom(code) {
   if (!code || code.length !== 4) {
-    alert('Пожалуйста, введите 4-значный код комнаты!');
+    showGameNotice('Введите четырёхзначный код комнаты.', { title: 'Неверный код', icon: '🔢' });
     return;
   }
   clearPendingHostStateMessage();
@@ -960,8 +1015,8 @@ function createRoomInvite(code, platform = 'web') {
     vk: '💙 VK'
   };
   const order = platform === 'telegram'
-    ? ['telegram', 'vk', 'web']
-    : (platform === 'vk' ? ['vk', 'telegram', 'web'] : ['web', 'telegram', 'vk']);
+    ? ['telegram', 'web']
+    : (platform === 'vk' ? ['vk', 'web'] : ['web', 'vk', 'telegram']);
   const linkLines = order.map(key => `${labels[key]}: ${links[key]}`).join('\n');
 
   return {
@@ -977,11 +1032,23 @@ async function shareRoomLink() {
 
   const copied = await copyTextToClipboard(invite.text);
   if (copied) {
-    alert(`📋 Приглашение в комнату ${code} скопировано!\n\nВ нём есть отдельные ссылки для Telegram, VK и браузера.`);
+    const destination = platform === 'vk'
+      ? 'В приглашении есть ссылка VK и запасная веб-ссылка.'
+      : (platform === 'telegram'
+        ? 'В приглашении есть ссылка приложения и запасная веб-ссылка.'
+        : 'В приглашении есть ссылки для доступных платформ.');
+    showGameNotice(`Приглашение в комнату ${code} скопировано!\n\n${destination}`, {
+      title: 'Можно отправлять',
+      icon: '📋'
+    });
     return;
   }
 
-  window.prompt('Не удалось получить доступ к буферу обмена. Скопируйте ссылку вручную:', invite.primaryUrl);
+  showGameNotice('Автоматическое копирование недоступно. Нажмите кнопку ниже или выделите текст вручную.', {
+    title: 'Скопируйте приглашение',
+    icon: '🔗',
+    copyValue: invite.text
+  });
 }
 
 async function copyTextToClipboard(textToCopy) {
@@ -1151,12 +1218,12 @@ function shuffleRawPairs() {
   }
 
   if (valid.length < 4) {
-    alert('Минимум 4 участника для игры командами!');
+    showGameNotice('Для командной игры нужно минимум четыре участника.', { title: 'Не хватает игроков', icon: '👥' });
     return;
   }
 
   if (gameState.playMode === 'online' && valid.length % 2 !== 0) {
-    alert('Для онлайн-игры нужно чётное количество участников!');
+    showGameNotice('Для онлайн-игры нужно чётное количество участников.', { title: 'Нужна полная пара', icon: '👥' });
     return;
   }
 
@@ -1192,7 +1259,7 @@ function shuffleRawPairs() {
 
     startWordEntry();
   } else if (gameState.playMode === 'local') {
-    alert(`🎉 Участники успешно распределены на ${gameState.teams.length} пары!`);
+    showGameNotice(`Участники распределены на ${gameState.teams.length} пары.`, { title: 'Команды готовы', icon: '🎉' });
   }
 }
 
@@ -1262,6 +1329,7 @@ function removeTeam(tIdx) {
 // --------------------------------------------------------------------------
 
 function startWordEntry() {
+  vkInterstitialRequested = false;
   if (gameState.playMode === 'local' && gameState.currentMode === 'random' && gameState.teams.length === 0) {
     shuffleRawPairs();
   }
@@ -1344,8 +1412,11 @@ function submitCurrentPlayerWords() {
   for (let input of inputs) {
     const val = input.value.trim();
     if (!val) {
-      alert('Пожалуйста, заполните все слова!');
-      input.focus();
+      showGameNotice('Заполните все поля со словами перед отправкой.', {
+        title: 'Не все слова введены',
+        icon: '✍️',
+        onClose: () => input.focus()
+      });
       return;
     }
     words.push(val);
@@ -1952,6 +2023,7 @@ function showFinalResults() {
 
   showScreen('screen-game-results');
   triggerConfetti();
+  setTimeout(requestVkInterstitialAd, 900);
 }
 
 // --------------------------------------------------------------------------
@@ -2115,6 +2187,19 @@ function initApp() {
   if (btnCloseRules) {
     btnCloseRules.addEventListener('click', () => {
       document.getElementById('modal-rules').classList.add('hidden');
+    });
+  }
+
+  const btnNoticeOk = document.getElementById('btn-notice-ok');
+  if (btnNoticeOk) btnNoticeOk.addEventListener('click', closeGameNotice);
+
+  const btnNoticeCopy = document.getElementById('btn-notice-copy');
+  if (btnNoticeCopy) btnNoticeCopy.addEventListener('click', retryNoticeCopy);
+
+  const noticeModal = document.getElementById('modal-notice');
+  if (noticeModal) {
+    noticeModal.addEventListener('click', event => {
+      if (event.target === noticeModal) closeGameNotice();
     });
   }
 
