@@ -139,6 +139,18 @@ body {
   transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   padding: 24px 20px;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+}
+
+.screen::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+#screen-home {
+  overflow: hidden;
 }
 
 .screen.active {
@@ -1017,6 +1029,75 @@ body {
   .turn-actions .btn {
     min-height: 58px;
   }
+}
+
+@media (max-width: 320px) {
+  .screen {
+    padding: 14px 12px;
+  }
+
+  #screen-home .screen-content {
+    gap: 8px;
+  }
+
+  #screen-home .hero-badge {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 4px;
+  }
+
+  #screen-home .hero-icon {
+    font-size: 40px;
+  }
+
+  #screen-home .hero-title {
+    font-size: 36px;
+    line-height: 1;
+  }
+
+  #screen-home .hero-subtitle {
+    font-size: 14px;
+    line-height: 1.35;
+    margin-top: 4px;
+    margin-bottom: 10px;
+  }
+
+  #screen-home .action-stack {
+    gap: 8px;
+  }
+
+  #screen-home .btn {
+    min-height: 48px;
+    padding: 11px 9px;
+    border-radius: 15px;
+    font-size: 14px;
+    gap: 6px;
+  }
+
+  #screen-home .screen-content > div:last-child {
+    margin-top: 8px !important;
+  }
+
+  #screen-turn .turn-actions {
+    gap: 8px;
+  }
+
+  #screen-turn .turn-actions .btn {
+    min-width: 0;
+    padding-left: 8px;
+    padding-right: 8px;
+    font-size: 14px;
+  }
+}
+
+.swipe-card.skip-feedback {
+  animation: skip-card-feedback 0.24s ease-out;
+}
+
+@keyframes skip-card-feedback {
+  0% { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 1; }
+  45% { transform: translate3d(-18px, 0, 0) rotate(-2deg); opacity: 0.72; }
+  100% { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 1; }
 }
 
 .btn-action-skip {

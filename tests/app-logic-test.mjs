@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+const stylesSource = await readFile(new URL('../styles.css', import.meta.url), 'utf8');
 const parserStart = appSource.indexOf('function extractRoomCodeFromLocation');
 const parserEnd = appSource.indexOf('\nfunction checkUrlRoomCode', parserStart);
 assert.ok(parserStart >= 0 && parserEnd > parserStart, 'Room-code parser must exist');
@@ -45,6 +46,28 @@ assert.doesNotMatch(vkInvite.text, /Telegram|t\.me/i);
 assert.doesNotMatch(appSource, /\b(?:alert|confirm|prompt)\s*\(/, 'Browser dialogs must not be used');
 assert.match(appSource, /VKWebAppShowNativeAds/);
 assert.match(appSource, /ad_format:\s*'interstitial'/);
+
+const skipSelectorStart = appSource.indexOf('function selectCardAfterSkip');
+const skipSelectorEnd = appSource.indexOf('\nfunction showSkipFeedback', skipSelectorStart);
+assert.ok(skipSelectorStart >= 0 && skipSelectorEnd > skipSelectorStart, 'Skip-card selector must exist');
+const selectCardAfterSkip = Function(
+  `${appSource.slice(skipSelectorStart, skipSelectorEnd)}; return selectCardAfterSkip;`
+)();
+
+const skippedCard = { id: 'card-a', word: 'Аист' };
+const nextCard = { id: 'card-b', word: 'Самолёт' };
+const laterCard = { id: 'card-c', word: 'Корабль' };
+const skipResult = selectCardAfterSkip(skippedCard, [laterCard, nextCard], 0.99);
+assert.equal(skipResult.currentCard.id, 'card-b');
+assert.notEqual(skipResult.currentCard.id, skippedCard.id);
+assert.ok(skipResult.deck.some(card => card.id === skippedCard.id));
+
+const onlyCardResult = selectCardAfterSkip(skippedCard, [], 0.5);
+assert.equal(onlyCardResult.currentCard.id, skippedCard.id);
+assert.deepEqual(onlyCardResult.deck, []);
+
+assert.match(stylesSource, /@media \(max-width: 320px\)/);
+assert.match(stylesSource, /#screen-home\s*\{\s*overflow:\s*hidden/);
 
 const copyStart = appSource.indexOf('async function copyTextToClipboard');
 const copyEnd = appSource.indexOf('\nfunction extractRoomCodeFromLocation', copyStart);

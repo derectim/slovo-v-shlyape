@@ -1685,29 +1685,42 @@ function handleCardSkip() {
 
 function applyCardSkipMutation() {
   if (!gameState.currentCard) return;
-
-  const skippedCard = gameState.currentCard;
-  gameState.currentCard = null;
-
-  if (gameState.deck.length === 0) {
-    gameState.deck.push(skippedCard);
-  } else {
-    const randomIdx = Math.floor(Math.random() * (gameState.deck.length + 1));
-    gameState.deck.splice(randomIdx, 0, skippedCard);
-  }
-
-  drawNextCard();
+  const skippedState = selectCardAfterSkip(gameState.currentCard, gameState.deck);
+  gameState.currentCard = skippedState.currentCard;
+  gameState.deck = skippedState.deck;
   updateTurnUI();
+  showSkipFeedback();
 }
 
 function applyOnlineCardSkip(acknowledgedActionId = null) {
   if (!gameState.isHost || !onlineTurnActive || !gameState.currentCard) return;
-  const skippedCard = gameState.currentCard;
-  gameState.currentCard = null;
-  if (gameState.deck.length === 0) gameState.deck.push(skippedCard);
-  else gameState.deck.splice(Math.floor(Math.random() * (gameState.deck.length + 1)), 0, skippedCard);
-  drawNextCard();
+  const skippedState = selectCardAfterSkip(gameState.currentCard, gameState.deck);
+  gameState.currentCard = skippedState.currentCard;
+  gameState.deck = skippedState.deck;
   broadcastOnlineTurnState(acknowledgedActionId);
+  showSkipFeedback();
+}
+
+function selectCardAfterSkip(skippedCard, deck, randomValue = Math.random()) {
+  const nextDeck = Array.isArray(deck) ? [...deck] : [];
+  if (!skippedCard) return { currentCard: null, deck: nextDeck };
+
+  // Если в шляпе есть другая карточка, показываем именно её, а пропущенную
+  // возвращаем глубже в колоду. Так «Пропустить» не может сразу показать то же слово.
+  if (nextDeck.length === 0) return { currentCard: skippedCard, deck: nextDeck };
+  const nextCard = nextDeck.pop();
+  const safeRandom = Math.max(0, Math.min(0.999999, Number(randomValue) || 0));
+  const insertIndex = Math.floor(safeRandom * (nextDeck.length + 1));
+  nextDeck.splice(insertIndex, 0, skippedCard);
+  return { currentCard: nextCard, deck: nextDeck };
+}
+
+function showSkipFeedback() {
+  if (!cardElem) return;
+  cardElem.classList.remove('skip-feedback');
+  void cardElem.offsetWidth;
+  cardElem.classList.add('skip-feedback');
+  setTimeout(() => cardElem && cardElem.classList.remove('skip-feedback'), 260);
 }
 
 function sendOnlineTurnAction(action) {
